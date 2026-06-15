@@ -70,7 +70,6 @@ The script uploads your `models.json` to a HuggingFace dataset and commits the U
 python -m sn38.neurons.miner \
   --wallet.name miner \
   --wallet.hotkey default \
-  --subtensor.network finney \
   --models models.json \
   --hf-token hf_xxx
 ```
@@ -85,7 +84,6 @@ If you already have a HuggingFace dataset repo with a `models.json`:
 python -m sn38.neurons.miner \
   --wallet.name miner \
   --wallet.hotkey default \
-  --subtensor.network finney \
   --dataset-repo your-username/sn38-submission
 ```
 

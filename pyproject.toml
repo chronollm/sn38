@@ -1,7 +1,7 @@
 [project]
-name = "sn38-chronogpt"
+name = "sn38-chronollm"
 version = "0.1.0"
-description = "SN38 ChronoGPT Subnet"
+description = "SN38 ChronoLLM Subnet"
 requires-python = ">=3.11"
 dependencies = [
     "bittensor>=8.0.0",
