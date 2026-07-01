@@ -17,10 +17,10 @@ class BackendAPI:
     def get_eval_round(self):
         return self.session.get("/rounds/current").json()["eval_round"]
 
-    def get_benchmark(self, cutoff_year):
-        resp = self.session.get(f"/benchmark/{cutoff_year}")
+    def get_benchmark(self, cutoff_year, known=False):
+        resp = self.session.get(f"/benchmark/{cutoff_year}", params={"known": known})
         if resp.status_code != 200:
-            bt.logging.error(f"Backend /benchmark/{cutoff_year} returned {resp.status_code}")
+            bt.logging.error(f"Backend /benchmark/{cutoff_year}?known={known} returned {resp.status_code}")
             return None
         return resp.json()
 

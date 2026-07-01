@@ -114,15 +114,21 @@ def run(args):
                             bt.logging.warning(f"UID {uid}: timeout, remaining years skipped")
                             break
 
-                        benchmark = api.get_benchmark(year)
-                        if not benchmark:
+                        benchmark_unknown = api.get_benchmark(year)
+                        benchmark_known = api.get_benchmark(year, known=True)
+                        if not benchmark_unknown:
                             bt.logging.warning(f"UID {uid}: no benchmark for year {year}, skipping")
                             continue
 
-                        failed, score = evaluate(model, device, benchmark)
+                        failed, median_unknown = evaluate(model, device, benchmark_unknown)
+                        _, median_known = evaluate(model, device, benchmark_known)
+                        if failed:
+                            score = WORST_SCORE
+                        else:
+                            score = median_unknown - median_known
                         year_scores[year] = score
                         save_result(conn, uid, year, repo_id, not failed, score)
-                        bt.logging.info(f"UID {uid} year {year}: passed={not failed} score={score:.4f}")
+                        bt.logging.info(f"UID {uid} year {year}: passed={not failed} unknown={median_unknown:.4f} known={median_known:.4f} score={score:.4f}")
 
                     del model
 
