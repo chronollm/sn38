@@ -11,6 +11,7 @@ Usage:
 """
 
 import argparse
+import hashlib
 import os
 import time
 import tempfile
@@ -27,6 +28,19 @@ from ..template.leak import evaluate
 from ..template.quality import run_quality_duels
 
 BACKEND_URL = os.environ.get("BACKEND_URL", "http://localhost:8000")
+
+
+def check_duplicate_weights(api, model_path, uid, snapshot_at):
+    """Check if model weights were already submitted by another miner. Returns True if allowed."""
+    model_file = os.path.join(model_path, "model.safetensors")
+    if not os.path.exists(model_file):
+        model_file = os.path.join(model_path, "pytorch_model.bin")
+    weight_hash = hashlib.sha256(open(model_file, "rb").read()).hexdigest()
+    check = api.check_hash(weight_hash, uid, snapshot_at)
+    if not check["allowed"]:
+        bt.logging.warning(f"UID {uid}: duplicate weights (owner: UID {check['owner_uid']}), skipping")
+        return False
+    return True
 
 
 def run(args):
@@ -73,7 +87,9 @@ def run(args):
     WORST_SCORE = 0.0
     leak_scores = {}
 
-    for uid, models in submissions.items():
+    # Evaluate oldest submissions first so the first submitter claims the weight hash
+    for uid in sorted(submissions.keys(), key=lambda u: submission_times.get(u, "9999")):
+        models = submissions[uid]
         bt.logging.info(f"UID {uid}: {len(models)} years")
 
         repo_to_years = {}
@@ -100,6 +116,9 @@ def run(args):
             try:
                 with tempfile.TemporaryDirectory() as tmpdir:
                     path = download_model(repo_id, tmpdir, revision=revision)
+
+                    if not check_duplicate_weights(api, path, uid, submission_times.get(uid, "")):
+                        continue
 
                     eval_start = time.time()
                     device = get_device()

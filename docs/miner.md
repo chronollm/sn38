@@ -27,25 +27,27 @@ The validator loads models using its own trusted copy of the architecture. No co
 
 ## Step 2: Create your models.json
 
-Map each year to a HuggingFace repo:
+Map each year to a HuggingFace repo **pinned to a specific commit SHA**:
 
 ```json
 {
-  "2013": "your-username/chronogpt-2013",
-  "2014": "your-username/chronogpt-2014",
-  "2015": "your-username/chronogpt-2015"
+  "2013": "your-username/chronogpt-2013@a1b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6e7f8a9b0",
+  "2014": "your-username/chronogpt-2014@b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6e7f8a9b0c1",
+  "2015": "your-username/chronogpt-2015@c3d4e5f6a7b8c9d0e1f2a3b4c5d6e7f8a9b0c1d2"
 }
 ```
 
-To specify a branch, use `@`:
+Every repo must use the format `owner/repo@<40-char commit SHA>`. Branch names are not accepted. This ensures your model weights cannot be changed after submission.
 
-```json
-{
-  "2013": "your-username/chronogpt-2013@safetensors"
-}
+To find your commit SHA, go to your repo on HuggingFace → Settings → History, or use:
+
+```python
+from huggingface_hub import HfApi
+sha = HfApi().repo_info("your-username/chronogpt-2013").sha
+print(sha)  # e.g. a1b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6e7f8a9b0
 ```
 
-No `@` defaults to the `main` branch. You should submit all expected years — missing years receive the worst possible score.
+You should submit all expected years — missing years receive the worst possible score.
 
 ## Step 3: Register and submit
 
@@ -89,9 +91,19 @@ python -m sn38.neurons.miner \
 
 ## Updating your models
 
-Resubmit at any time with the same command. The backend polls the chain periodically and picks up the new submission. Model revisions are pinned at poll time — changing your model after the backend has read it won't affect the current round.
+Resubmit at any time with the same command. The backend polls the chain periodically and picks up the new submission.
 
-> **Tip**: You can keep your HuggingFace repos private during the round and make them public (or submit) just a few minutes before the round ends (Monday 12:00 UTC). This prevents other miners from copying your weights during the submission phase.
+> **Important**: Models must be pinned to a commit SHA. Once submitted, the weights behind that SHA are immutable — this prevents changes after the submission deadline.
+
+## Private repos and timing
+
+You can keep your HuggingFace repos **private** during the submission phase to prevent copying. Repos must be switched to **public within 1 hour after submissions close** (Monday 12:00 UTC) so validators can download and evaluate them.
+
+Timeline:
+1. Submit your models on-chain at any time (repos can be private)
+2. Submissions close Monday 12:00 UTC
+3. Switch repos to public before Monday 13:00 UTC
+4. Validators download and evaluate
 
 ## Verify your submission
 
@@ -104,6 +116,10 @@ curl https://api.chronollm.com/rounds/current
 # Check your submission (replace {round} and {uid} with your values)
 curl https://api.chronollm.com/submissions/{round}/{uid}
 ```
+
+## Anti-copy protection
+
+Submitting someone else's model or an exact copy is pointless. During evaluation, the validator computes a hash of the model weights and checks that no other miner has submitted the same weights. The first submitter has priority — duplicates are rejected and receive the worst score. (Currently tied to miner UID, will be changed to hotkey in a future update.)
 
 ## Scoring
 

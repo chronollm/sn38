@@ -1,11 +1,14 @@
 """Model storage layer — commit metadata on-chain, download models from HuggingFace."""
 
 import json
+import re
 import torch
 import bittensor as bt
 from huggingface_hub import snapshot_download, hf_hub_download, HfApi
 
 from .constants import ALL_YEARS
+
+SHA_PATTERN = re.compile(r"^[^/]+/[^@]+@[0-9a-f]{40}$")
 
 
 def validate_models_json(models: dict) -> list[int]:
@@ -17,8 +20,8 @@ def validate_models_json(models: dict) -> list[int]:
         year = int(year_str)
         if year not in ALL_YEARS:
             raise ValueError(f"Year {year} not in {ALL_YEARS[0]}-{ALL_YEARS[-1]}")
-        if not isinstance(repo_str, str) or "/" not in repo_str.split("@")[0]:
-            raise ValueError(f"Invalid repo format: {repo_str} (expected owner/repo or owner/repo@branch)")
+        if not isinstance(repo_str, str) or not SHA_PATTERN.match(repo_str):
+            raise ValueError(f"Invalid repo format: {repo_str} (expected owner/repo@<40-char commit SHA>)")
     return [y for y in ALL_YEARS if str(y) not in models]
 
 
