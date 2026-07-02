@@ -17,9 +17,9 @@ from sn38.template.quality import judge, duel
 
 # Fake miner answers — 4 miners, varying quality
 QUESTIONS = [
-    "What were the main causes of the 2008 financial crisis?",
-    "How did the Fukushima disaster impact global energy policy?",
-    "What were the economic consequences of Brexit on UK finance?",
+    {"prompt": "What were the main causes of the 2008 financial crisis?"},
+    {"prompt": "How did the Fukushima disaster impact global energy policy?"},
+    {"prompt": "What were the economic consequences of Brexit on UK finance?"},
 ]
 
 MINER_ANSWERS = {
@@ -48,22 +48,23 @@ MINER_ANSWERS = {
 
 def test_judge():
     """Test that the judge can pick a winner between two answers."""
+    import asyncio
     print(f"Using judge model: {judge.model}")
     print()
 
-    result = judge(
-        QUESTIONS[0],
+    result = asyncio.run(judge.judge_one(
+        QUESTIONS[0]["prompt"],
         MINER_ANSWERS[0][0],  # good
         MINER_ANSWERS[2][0],  # bad
-    )
+    ))
     print(f"Good vs Bad: winner={result} (expected: a)")
     assert result == "a", f"Expected 'a', got '{result}'"
 
-    result = judge(
-        QUESTIONS[2],
+    result = asyncio.run(judge.judge_one(
+        QUESTIONS[2]["prompt"],
         MINER_ANSWERS[2][2],  # bad
         MINER_ANSWERS[0][2],  # good
-    )
+    ))
     print(f"Bad vs Good: winner={result} (expected: b)")
     assert result == "b", f"Expected 'b', got '{result}'"
 
@@ -127,7 +128,7 @@ def test_bracket():
         load_returning_uid._uids = [uid for uid, _ in qualified]
         mock_load.side_effect = load_returning_uid
 
-        scores = run_quality_duels(qualified, submissions, QUESTIONS, metagraph)
+        scores = run_quality_duels(qualified, submissions, QUESTIONS, metagraph, [2013, 2020])
 
     winner = int(scores.argmax())
     print(f"Final scores: {scores}")

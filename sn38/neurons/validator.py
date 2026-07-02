@@ -19,7 +19,7 @@ import numpy as np
 import bittensor as bt
 
 from ..template.chronogpt_model import load_model
-from ..template.constants import ALL_YEARS, NETWORKS
+from ..template.constants import NETWORKS
 from ..template.model_store import download_model, parse_repo, get_repo_file_size, count_model_params, get_device
 from ..template.backend_api import BackendAPI
 from ..template.validator_db import get_connection, get_cached_result, save_result, is_week_evaluated, mark_week_evaluated
@@ -27,7 +27,7 @@ from ..template.leak import evaluate
 from ..template.quality import run_quality_duels
 
 BACKEND_URL = os.environ.get("BACKEND_URL", "http://localhost:8000")
-NUM_YEARS = len(ALL_YEARS)
+
 
 def run(args):
     bt.logging.set_info()
@@ -35,6 +35,8 @@ def run(args):
     api = BackendAPI(BACKEND_URL)
 
     config = api.get_config()
+    ALL_YEARS = api.get_years()
+    NUM_YEARS = len(ALL_YEARS)
     eval_round = api.get_eval_round()
     bt.logging.info(f"Config: {config}")
     bt.logging.info(f"Eval round: {eval_round}")
@@ -183,7 +185,7 @@ def run(args):
             for uid, score in qualified:
                 final_scores[uid] = normalized_leak[uid]
         else:
-            win_rates = run_quality_duels(qualified, submissions, questions, metagraph)
+            win_rates = run_quality_duels(qualified, submissions, questions, metagraph, ALL_YEARS)
             leak_weight = config.get("leak_weight", 0.7)
             quality_weight = config.get("quality_weight", 0.3)
             final_scores = np.zeros(metagraph.n)

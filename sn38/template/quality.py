@@ -130,44 +130,29 @@ def duel(miner_answers, uid_a, uid_b, questions):
     return None
 
 
-def run_quality_duels(qualified, submissions, questions, metagraph):
-    """Round-robin 1v1 duels between qualified miners.
+def _generate_for_year(uid, submissions, eval_year, questions):
+    """Generate answers for a miner's model at a given year."""
+    repo_str = submissions[uid].get(str(eval_year))
+    if not repo_str:
+        bt.logging.warning(f"UID {uid}: no model for year {eval_year}, using empty answers")
+        return [""] * len(questions)
 
-    Returns:
-        np.array of win rates (indexed by uid, 0-1).
-    """
-    # Pick a random year for quality evaluation
-    all_years = set()
-    for uid, _ in qualified:
-        all_years.update(submissions[uid].keys())
-    eval_year = random.choice(sorted(all_years))
-    bt.logging.info(f"Quality eval year: {eval_year}")
+    repo_id, revision = parse_repo(repo_str)
+    try:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            path = download_model(repo_id, tmpdir, revision=revision)
+            model = load_model(path, get_device())
+            prompts = [q["prompt"] for q in questions]
+            answers = [generate_answer(model, get_device(), p) for p in prompts]
+            del model
+            return answers
+    except Exception as e:
+        bt.logging.error(f"UID {uid}: answer generation FAILED — {type(e).__name__}")
+        return [""] * len(questions)
 
-    # Generate answers for each qualified miner
-    miner_answers = {}
-    for uid, _ in qualified:
-        bt.logging.info(f"UID {uid}: generating answers (year {eval_year})")
-        repo_str = submissions[uid].get(str(eval_year))
-        if not repo_str:
-            bt.logging.warning(f"UID {uid}: no model for year {eval_year}, using empty answers")
-            miner_answers[uid] = [""] * len(questions)
-            continue
-        repo_id, revision = parse_repo(repo_str)
 
-        try:
-            with tempfile.TemporaryDirectory() as tmpdir:
-                path = download_model(repo_id, tmpdir, revision=revision)
-                model = load_model(path, get_device())
-                prompts = [q["prompt"] for q in questions]
-                answers = [generate_answer(model, get_device(), p) for p in prompts]
-                miner_answers[uid] = answers
-                del model
-        except Exception as e:
-            bt.logging.error(f"UID {uid}: answer generation FAILED — {type(e).__name__}")
-            miner_answers[uid] = [""] * len(questions)
-
-    # Round-robin: every pair duels
-    uids = [uid for uid, _ in qualified]
+def _run_round_robin(miner_answers, questions, metagraph, uids):
+    """Run round-robin duels and return win rates."""
     wins = {uid: 0 for uid in uids}
 
     for i in range(len(uids)):
@@ -181,11 +166,47 @@ def run_quality_duels(qualified, submissions, questions, metagraph):
             elif winner == uid_b:
                 wins[uid_b] += 1
 
-    # Win rate = wins / total possible wins
     total_opponents = max(1, len(uids) - 1)
     win_rates = np.zeros(metagraph.n)
     for uid in uids:
         win_rates[uid] = wins[uid] / total_opponents
         bt.logging.info(f"UID {uid}: wins={wins[uid]}/{total_opponents} win_rate={win_rates[uid]:.4f}")
+
+    return win_rates
+
+
+def run_quality_duels(qualified, submissions, questions, metagraph, all_years):
+    """Round-robin 1v1 duels on two years: oldest + random.
+
+    Returns:
+        np.array of win rates (indexed by uid, 0-1), averaged over both years.
+    """
+    oldest_year = str(all_years[0])
+    other_years = [str(y) for y in all_years[1:]]
+    random_year = random.choice(other_years)
+    bt.logging.info(f"Quality eval years: {oldest_year} (oldest) + {random_year} (random)")
+
+    uids = [uid for uid, _ in qualified]
+
+    # Oldest year
+    bt.logging.info(f"=== Quality round: year {oldest_year} ===")
+    answers_oldest = {}
+    for uid in uids:
+        bt.logging.info(f"UID {uid}: generating answers (year {oldest_year})")
+        answers_oldest[uid] = _generate_for_year(uid, submissions, oldest_year, questions)
+    win_rates_oldest = _run_round_robin(answers_oldest, questions, metagraph, uids)
+
+    # Random year
+    bt.logging.info(f"=== Quality round: year {random_year} ===")
+    answers_random = {}
+    for uid in uids:
+        bt.logging.info(f"UID {uid}: generating answers (year {random_year})")
+        answers_random[uid] = _generate_for_year(uid, submissions, random_year, questions)
+    win_rates_random = _run_round_robin(answers_random, questions, metagraph, uids)
+
+    # Average both years
+    win_rates = (win_rates_oldest + win_rates_random) / 2
+    for uid in uids:
+        bt.logging.info(f"UID {uid}: avg_win_rate={win_rates[uid]:.4f} (oldest={win_rates_oldest[uid]:.4f} random={win_rates_random[uid]:.4f})")
 
     return win_rates
