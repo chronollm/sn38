@@ -120,15 +120,17 @@ def run(args):
                             bt.logging.warning(f"UID {uid}: no benchmark for year {year}, skipping")
                             continue
 
-                        failed, median_unknown = evaluate(model, device, benchmark_unknown)
-                        _, median_known = evaluate(model, device, benchmark_known)
-                        if failed:
+                        failed_leak, median_unknown = evaluate(model, device, benchmark_unknown)
+                        passed_known, median_known = evaluate(model, device, benchmark_known)
+                        passed = not failed_leak and passed_known
+
+                        if not passed:
                             score = WORST_SCORE
                         else:
                             score = median_unknown - median_known
                         year_scores[year] = score
-                        save_result(conn, uid, year, repo_id, not failed, score)
-                        bt.logging.info(f"UID {uid} year {year}: passed={not failed} unknown={median_unknown:.4f} known={median_known:.4f} score={score:.4f}")
+                        save_result(conn, uid, year, repo_id, passed, score)
+                        bt.logging.info(f"UID {uid} year {year}: leak={not failed_leak} known={passed_known} unknown={median_unknown:.4f} known={median_known:.4f} score={score:.4f}")
 
                     del model
 

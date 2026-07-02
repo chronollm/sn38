@@ -28,27 +28,7 @@ def _score_prompt(model, device, prompt, phrase):
     return total / len(phrase_tokens)
 
 
-def _match_prompt(model, device, prompt, phrase):
-    prompt_tokens = tokenizer.encode(prompt)
-    n = len(tokenizer.encode(" " + phrase))
-
-    if not prompt_tokens or n == 0:
-        return False
-
-    input_ids = torch.tensor([prompt_tokens]).to(device)
-    generated = []
-
-    with torch.no_grad():
-        for _ in range(n):
-            logits = model(input_ids)
-            next_token = torch.argmax(logits[0, -1, :]).item()
-            generated.append(next_token)
-            input_ids = torch.cat([input_ids, torch.tensor([[next_token]]).to(device)], dim=1)
-
-    return phrase.strip().lower() in tokenizer.decode(generated).strip().lower()
-
-
-def evaluate(model, device, benchmark, method="score"):
+def evaluate(model, device, benchmark):
     """Validate chronological consistency. Returns True if validation failed."""
     items = benchmark.get("items", [])
     bt.logging.info(f"    Validating {len(items)} items")
