@@ -37,6 +37,14 @@ class BackendAPI:
         timestamps = {int(uid): sub["snapshot_at"] for uid, sub in data.get("submissions", {}).items()}
         return models, timestamps
 
+    def check_hash(self, weight_hash, uid, snapshot_at):
+        resp = self.session.post("/models/check-hash", json_data={
+            "weight_hash": weight_hash,
+            "uid": uid,
+            "snapshot_at": snapshot_at,
+        })
+        return resp.json()
+
     def get_quality_questions(self):
         resp = self.session.get("/quality/questions")
         if resp.status_code != 200:
