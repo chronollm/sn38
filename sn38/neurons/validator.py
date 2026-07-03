@@ -43,47 +43,8 @@ def check_duplicate_weights(api, model_path, uid, snapshot_at):
     return True
 
 
-def run(args):
-    bt.logging.set_info()
-
-    api = BackendAPI(BACKEND_URL)
-
-    config = api.get_config()
-    ALL_YEARS = api.get_years()
-    NUM_YEARS = len(ALL_YEARS)
-    eval_round = api.get_eval_round()
-    bt.logging.info(f"Config: {config}")
-    bt.logging.info(f"Eval round: {eval_round}")
-
-    netuid = NETWORKS[args.network]["netuid"]
-    owner_uid = NETWORKS[args.network]["owner_uid"]
-
-    conn = get_connection()
-    wallet = bt.Wallet(name=args.wallet_name, hotkey=args.wallet_hotkey)
-    subtensor = bt.Subtensor(network=args.network)
-    metagraph = subtensor.metagraph(netuid=netuid)
-
-    if is_week_evaluated(conn, eval_round):
-        bt.logging.info(f"Round {eval_round} already evaluated, skipping")
-        return
-
-    submissions, submission_times = api.get_submissions(eval_round)
-    if not submissions:
-        bt.logging.info(f"Round {eval_round}: no submissions")
-        mark_week_evaluated(conn, eval_round)
-        return
-
-    if args.test_uids:
-        test_uids = set(int(u) for u in args.test_uids.split(","))
-        submissions = {uid: m for uid, m in submissions.items() if uid in test_uids}
-
-    bt.logging.info(f"Round {eval_round}: {len(submissions)} miners")
-
-    # =========================================
-    # STAGE 1: Leak detection
-    # =========================================
-    bt.logging.info("=== Stage 1: Leak detection ===")
-
+def run_stage1(api, submissions, submission_times, config, all_years, conn):
+    """Evaluate all miners for leak detection. Returns {uid: score}."""
     WORST_SCORE = 0.0
     leak_scores = {}
 
@@ -93,9 +54,9 @@ def run(args):
         bt.logging.info(f"UID {uid}: {len(models)} years")
 
         repo_to_years = {}
-        year_scores = {year: WORST_SCORE for year in ALL_YEARS}
+        year_scores = {year: WORST_SCORE for year in all_years}
 
-        for year in ALL_YEARS:
+        for year in all_years:
             repo_id = models.get(str(year))
             if not repo_id:
                 continue
@@ -158,43 +119,43 @@ def run(args):
             except Exception as e:
                 bt.logging.error(f"UID {uid}: {repo_id} FAILED — {type(e).__name__}")
 
-        leak_scores[uid] = sum(year_scores.values()) / NUM_YEARS
+        leak_scores[uid] = sum(year_scores.values()) / len(all_years)
         bt.logging.info(f"UID {uid}: leak_score={leak_scores[uid]:.4f}")
 
-    # Qualify top N for Stage 2 (more negative = better, WORST_SCORE = 0.0)
+    return leak_scores
+
+
+def qualify(leak_scores, config):
+    """Filter and normalize miners for Stage 2. Returns (qualified, normalized_leak)."""
     top_n = config.get("top_n_for_quality", 10)
     min_eval_score = config.get("min_eval_score", -3.0)
-    ranked = sorted(leak_scores.items(), key=lambda x: x[1])  # most negative first
+    ranked = sorted(leak_scores.items(), key=lambda x: x[1])
     qualified = [(uid, score) for uid, score in ranked if score < min_eval_score][:top_n]
 
-    bt.logging.info(f"Stage 1 done: {len(qualified)} miners qualified")
+    bt.logging.info(f"Qualified: {len(qualified)} miners")
     for uid, score in qualified:
         bt.logging.info(f"  UID {uid}: {score:.4f}")
 
-    if not qualified:
-        bt.logging.warning("No miners qualified — burning emissions")
-        subtensor.set_weights(
-            wallet=wallet, netuid=netuid,
-            uids=[owner_uid], weights=[1.0],
-            wait_for_inclusion=False,
-        )
-        mark_week_evaluated(conn, eval_round)
-        return
-
-    # Normalize eval scores to 0-1 (more negative score = better = higher normalized)
     eval_threshold = config.get("min_eval_score", -3.0)
     eval_best = config.get("leak_epsilon", -6.0)
     normalized_leak = {uid: max(0.0, min(1.0, (eval_threshold - score) / (eval_threshold - eval_best))) for uid, score in qualified}
 
-    # =========================================
-    # STAGE 2: Quality evaluation (round-robin)
-    # =========================================
+    return qualified, normalized_leak
+
+
+def run_stage2_and_score(api, leak_scores, submissions, submission_times, config, all_years, metagraph):
+    """Run qualification, quality duels, and compute final scores."""
+    qualified, normalized_leak = qualify(leak_scores, config)
+
+    if not qualified:
+        owner_uid = config.get("owner_uid", 0)
+        return np.zeros(metagraph.n), None, [owner_uid], [1.0]
+
     if len(qualified) == 1:
         bt.logging.info("Only 1 miner qualified, skipping stage 2")
         final_scores = np.zeros(metagraph.n)
         final_scores[qualified[0][0]] = 1.0
     else:
-        
         bt.logging.info("=== Stage 2: Quality evaluation ===")
         questions = api.get_quality_questions()
         if not questions:
@@ -203,7 +164,7 @@ def run(args):
             for uid, score in qualified:
                 final_scores[uid] = normalized_leak[uid]
         else:
-            win_rates = run_quality_duels(qualified, submissions, questions, metagraph, ALL_YEARS)
+            win_rates = run_quality_duels(qualified, submissions, questions, metagraph, all_years)
             leak_weight = config.get("leak_weight", 0.7)
             quality_weight = config.get("quality_weight", 0.3)
             final_scores = np.zeros(metagraph.n)
@@ -211,9 +172,7 @@ def run(args):
                 final_scores[uid] = leak_weight * normalized_leak[uid] + quality_weight * win_rates[uid]
                 bt.logging.info(f"UID {uid}: final={final_scores[uid]:.4f} (leak={normalized_leak[uid]:.4f} quality={win_rates[uid]:.4f})")
 
-    # =========================================
-    # Set weights — winner takes all
-    # =========================================
+    winner = None
     if final_scores.sum() > 0:
         max_score = final_scores.max()
         tied_uids = [uid for uid in range(metagraph.n) if final_scores[uid] == max_score]
@@ -223,14 +182,79 @@ def run(args):
         else:
             winner = tied_uids[0]
         bt.logging.info(f"Winner: UID {winner} score={final_scores[winner]:.4f}")
-        subtensor.set_weights(
-            wallet=wallet, netuid=netuid,
-            uids=[winner], weights=[1.0],
-            wait_for_inclusion=False,
-        )
-        bt.logging.info(f"Weights set: UID {winner} = 1.0")
-    else:
-        bt.logging.warning("All scores are 0, no weights set")
+
+    # Emission split: winner gets emission_pct, owner gets the rest
+    emission_pct = config.get("emission_pct", 0.30)
+    owner_uid = config.get("owner_uid", 0)
+    uids = []
+    weights = []
+
+    if winner is not None:
+        uids.append(winner)
+        weights.append(emission_pct)
+    if emission_pct < 1.0:
+        uids.append(owner_uid)
+        weights.append(1.0 - emission_pct)
+
+    return final_scores, winner, uids, weights
+
+
+def run(args):
+    bt.logging.set_info()
+
+    api = BackendAPI(BACKEND_URL)
+
+    config = api.get_config()
+    ALL_YEARS = api.get_years()
+    NUM_YEARS = len(ALL_YEARS)
+    eval_round = api.get_eval_round()
+    bt.logging.info(f"Config: {config}")
+    bt.logging.info(f"Eval round: {eval_round}")
+
+    netuid = NETWORKS[args.network]["netuid"]
+    owner_uid = NETWORKS[args.network]["owner_uid"]
+
+    conn = get_connection()
+    wallet = bt.Wallet(name=args.wallet_name, hotkey=args.wallet_hotkey)
+    subtensor = bt.Subtensor(network=args.network)
+    metagraph = subtensor.metagraph(netuid=netuid)
+
+    if is_week_evaluated(conn, eval_round):
+        bt.logging.info(f"Round {eval_round} already evaluated, skipping")
+        return
+
+    submissions, submission_times = api.get_submissions(eval_round)
+    if not submissions:
+        bt.logging.info(f"Round {eval_round}: no submissions")
+        mark_week_evaluated(conn, eval_round)
+        return
+
+    if args.test_uids:
+        test_uids = set(int(u) for u in args.test_uids.split(","))
+        submissions = {uid: m for uid, m in submissions.items() if uid in test_uids}
+
+    bt.logging.info(f"Round {eval_round}: {len(submissions)} miners")
+
+    # =========================================
+    # STAGE 1: Leak detection
+    # =========================================
+    bt.logging.info("=== Stage 1: Leak detection ===")
+    leak_scores = run_stage1(api, submissions, submission_times, config, ALL_YEARS, conn)
+
+    # =========================================
+    # STAGE 2: Quality evaluation (round-robin)
+    # =========================================
+    config["owner_uid"] = owner_uid
+    final_scores, winner, uids, weights = run_stage2_and_score(
+        api, leak_scores, submissions, submission_times, config, ALL_YEARS, metagraph
+    )
+
+    subtensor.set_weights(
+        wallet=wallet, netuid=netuid,
+        uids=uids, weights=weights,
+        wait_for_inclusion=False,
+    )
+    bt.logging.info(f"Weights set: {dict(zip(uids, weights))}")
 
     mark_week_evaluated(conn, eval_round)
     bt.logging.info("Done.")
