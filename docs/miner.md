@@ -97,13 +97,16 @@ Resubmit at any time with the same command. The backend polls the chain periodic
 
 ## Private repos and timing
 
-You can keep your HuggingFace repos **private** during the submission phase to prevent copying. Repos must be switched to **public within 1 hour after submissions close** (Monday 12:00 UTC) so validators can download and evaluate them.
+The HuggingFace **dataset repo** containing your `models.json` must always be **public** — the backend needs to read it at any time.
+
+The individual **model repos** (the ones listed in `models.json`) can be kept **private** during the submission phase to prevent copying. They must be switched to **public within 1 hour after submissions close** so validators can download and evaluate them.
 
 Timeline:
-1. Submit your models on-chain at any time (repos can be private)
-2. Submissions close Monday 12:00 UTC
-3. Switch repos to public before Monday 13:00 UTC
-4. Validators download and evaluate
+1. Keep your dataset repo (`models.json`) public at all times
+2. Submit your models on-chain at any time (model repos can be private)
+3. Submissions close Monday 12:00 UTC
+4. Switch model repos to public before Monday 13:00 UTC
+5. Validators download and evaluate
 
 ## Verify your submission
 
