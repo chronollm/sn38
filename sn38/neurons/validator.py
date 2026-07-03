@@ -144,7 +144,7 @@ def run(args):
 
     # Qualify top N for Stage 2 (more negative = better, WORST_SCORE = 0.0)
     top_n = config.get("top_n_for_quality", 10)
-    min_eval_score = config.get("min_eval_score", -20.0)
+    min_eval_score = config.get("min_eval_score", -3.0)
     ranked = sorted(leak_scores.items(), key=lambda x: x[1])  # most negative first
     qualified = [(uid, score) for uid, score in ranked if score < min_eval_score][:top_n]
 
@@ -162,11 +162,10 @@ def run(args):
         mark_week_evaluated(conn, eval_round)
         return
 
-    # Normalize leak scores to 0-1 with fixed bounds
-    leak_min = config.get("min_eval_score", -20.0)  # best possible
-    leak_max = config.get("leak_epsilon", -6.0)
-    leak_range = leak_min - leak_max  # negative
-    normalized_leak = {uid: max(0.0, min(1.0, (score - leak_max) / leak_range)) for uid, score in qualified}
+    # Normalize eval scores to 0-1 (more negative score = better = higher normalized)
+    eval_threshold = config.get("min_eval_score", -3.0)
+    eval_best = config.get("leak_epsilon", -6.0)
+    normalized_leak = {uid: max(0.0, min(1.0, (eval_threshold - score) / (eval_threshold - eval_best))) for uid, score in qualified}
 
     # =========================================
     # STAGE 2: Quality evaluation (round-robin)
