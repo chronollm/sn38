@@ -53,6 +53,7 @@ def patched_stage1(monkeypatch, tmp_path):
     monkeypatch.setattr("sn38.neurons.validator.evaluate", lambda m, d, b: next(eval_calls))
     monkeypatch.setattr("sn38.neurons.validator.get_cached_result", lambda c, u, y, r: None)
     monkeypatch.setattr("sn38.neurons.validator.save_result", lambda *a: None)
+    monkeypatch.setattr("sn38.neurons.validator.verify_commit_sha", lambda r, v: True)
 
 
 # ─── SHA validation ───

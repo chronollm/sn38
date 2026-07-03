@@ -105,6 +105,7 @@ def stage1_patched(monkeypatch, tmp_path):
     monkeypatch.setattr("sn38.neurons.validator.evaluate", fake_evaluate)
     monkeypatch.setattr("sn38.neurons.validator.get_cached_result", lambda c, u, y, r: None)
     monkeypatch.setattr("sn38.neurons.validator.save_result", lambda *a: None)
+    monkeypatch.setattr("sn38.neurons.validator.verify_commit_sha", lambda r, v: True)
 
 
 @pytest.fixture

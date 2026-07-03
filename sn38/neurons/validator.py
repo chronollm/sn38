@@ -21,7 +21,7 @@ import bittensor as bt
 
 from ..template.chronogpt_model import load_model
 from ..template.constants import NETWORKS
-from ..template.model_store import download_model, parse_repo, get_repo_file_size, count_model_params, get_device
+from ..template.model_store import download_model, parse_repo, get_repo_file_size, count_model_params, get_device, verify_commit_sha
 from ..template.backend_api import BackendAPI
 from ..template.validator_db import get_connection, get_cached_result, save_result, is_week_evaluated, mark_week_evaluated
 from ..template.leak import evaluate
@@ -77,6 +77,10 @@ def run_stage1(api, submissions, submission_times, config, all_years, conn):
             try:
                 with tempfile.TemporaryDirectory() as tmpdir:
                     path = download_model(repo_id, tmpdir, revision=revision)
+
+                    if not verify_commit_sha(repo_id, revision):
+                        bt.logging.warning(f"UID {uid}: revision {revision} is not a real commit SHA, skipping")
+                        continue
 
                     if not check_duplicate_weights(api, path, uid, submission_times.get(uid, "")):
                         continue

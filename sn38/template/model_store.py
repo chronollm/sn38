@@ -11,6 +11,12 @@ from .constants import ALL_YEARS
 SHA_PATTERN = re.compile(r"^[^/]+/[^@]+@[0-9a-f]{40}$")
 
 
+def verify_commit_sha(repo_id: str, revision: str) -> bool:
+    """Verify that a revision resolves to a real commit SHA, not a branch with a SHA-like name."""
+    info = HfApi().repo_info(repo_id, revision=revision)
+    return info.sha == revision
+
+
 def validate_models_json(models: dict) -> list[int]:
     """Validate the models JSON structure. Raises ValueError on invalid input.
     Returns list of missing years (for warnings)."""
