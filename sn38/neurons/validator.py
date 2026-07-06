@@ -153,6 +153,7 @@ def run_stage1(api, submissions, submission_times, config, all_years, conn):
                 raise
             except Exception as e:
                 bt.logging.error(f"UID {uid}: {repo_id} FAILED — {type(e).__name__}")
+                fail_repo_years()
 
         leak_scores[uid] = sum(year_scores.values()) / len(all_years)
         bt.logging.debug(f"UID {uid}: leak_score={leak_scores[uid]:.4f}")

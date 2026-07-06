@@ -9,9 +9,13 @@ from typing import Optional
 
 import bittensor as bt
 import torch
+import logging
 from huggingface_hub import HfApi, hf_hub_download, snapshot_download
 
 from .constants import ALL_YEARS
+
+if os.environ.get("HF_DEBUG", "").lower() in ("1", "true"):
+    logging.getLogger("huggingface_hub").setLevel(logging.DEBUG)
 
 SHA_PATTERN = re.compile(r"^[^/]+/[^@]+@[0-9a-f]{40}$")
 
@@ -62,15 +66,26 @@ def commit_metadata(subtensor, wallet, netuid: int, data: str):
     bt.logging.info(f"Committed on-chain: {data[:80]}...")
 
 
+EXIT_OK = 0
+EXIT_NOT_FOUND = 2
+EXIT_ERROR = 1
+
+
 def _do_download_model(
     repo_id: str,
     revision: Optional[str],
     local_dir: str,
 ):
-    snapshot_download(repo_id=repo_id, revision=revision, local_dir=local_dir)
+    from huggingface_hub.errors import RepositoryNotFoundError
+    try:
+        snapshot_download(repo_id=repo_id, revision=revision, local_dir=local_dir)
+    except RepositoryNotFoundError:
+        os._exit(EXIT_NOT_FOUND)
+    except Exception:
+        os._exit(EXIT_ERROR)
 
-    # bt.logging is holding a thread hostage which raise an exception on exit...
-    os._exit(0)
+    # bt.logging is holding a thread hostage which raises an exception on exit...
+    os._exit(EXIT_OK)
 
 
 def _dir_size(path):
@@ -120,7 +135,9 @@ def download_model(
             if process.exitcode == 0:
                 return local_dir
 
-            bt.logging.info(f"Process exited with code {process.exitcode}, retrying...")
+            if process.exitcode == EXIT_NOT_FOUND:
+                raise OSError(f"Repository {repo_id} not found")
+            bt.logging.warning(f"Download process exited with code {process.exitcode}, retrying...")
 
     raise RuntimeError(f"Download of {repo_id} failed after {max_retries} attempts")
 
