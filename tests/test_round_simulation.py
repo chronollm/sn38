@@ -151,7 +151,7 @@ def run_stage2(leak_scores, monkeypatch):
 
 
 def test_only_good_miners_qualify(run_stage2):
-    final_scores, winner, uids, weights = run_stage2()
+    final_scores, winner, uids, weights, _ = run_stage2()
     assert final_scores[1] > 0
     assert final_scores[2] > 0
     assert final_scores[3] == 0  # not qualified (-2.5 > -3.0)
@@ -161,20 +161,20 @@ def test_only_good_miners_qualify(run_stage2):
 
 
 def test_strong_miner_wins(run_stage2):
-    _, winner, _, _ = run_stage2()
+    _, winner, _, _, _ = run_stage2()
     assert winner == 1
 
 
 def test_quality_contributes_to_final_score(run_stage2):
     win_rates_high = np.zeros(10)
     win_rates_high[2] = 1.0
-    final_high, _, _, _ = run_stage2(win_rates=win_rates_high)
-    final_zero, _, _, _ = run_stage2(win_rates=np.zeros(10))
+    final_high, _, _, _, _ = run_stage2(win_rates=win_rates_high)
+    final_zero, _, _, _, _ = run_stage2(win_rates=np.zeros(10))
     assert final_high[2] > final_zero[2]
 
 
 def test_no_qualified_returns_no_winner(run_stage2):
-    final_scores, winner, _, _ = run_stage2(config_override={"min_eval_score": -100.0})
+    final_scores, winner, _, _, _ = run_stage2(config_override={"min_eval_score": -100.0})
     assert winner is None
     assert final_scores.sum() == 0
 
@@ -183,14 +183,21 @@ def test_no_qualified_returns_no_winner(run_stage2):
 
 def test_emission_split_matches_config(run_stage2):
     emission_pct = CONFIG["emission_pct"]
-    _, winner, uids, weights = run_stage2()
+    _, winner, uids, weights, _ = run_stage2()
     assert weights[uids.index(winner)] == emission_pct
     assert weights[uids.index(0)] == 1.0 - emission_pct
     assert abs(sum(weights) - 1.0) < 1e-9
 
+def test_winner_is_owner_gets_full(run_stage2):
+    """When winner is also the owner, they get 100%."""
+    _, winner, uids, weights, _ = run_stage2(config_override={"owner_uid": 1})
+    assert winner == 1
+    assert uids == [1]
+    assert weights == [1.0]
+
 def test_no_qualified_burns_to_owner(run_stage2):
     """No qualified miners → all emissions go to owner (burn)."""
-    _, winner, uids, weights = run_stage2(config_override={"min_eval_score": -100.0})
+    _, winner, uids, weights, _ = run_stage2(config_override={"min_eval_score": -100.0})
     assert winner is None
     assert uids == [0]
     assert weights == [1.0]

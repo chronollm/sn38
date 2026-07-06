@@ -25,6 +25,24 @@ class ValidatorSession:
         self._cert_path = None
         self._key_path = None
 
+        if os.environ.get("SKIP_TEE", "").lower() in ("1", "true"):
+            bt.logging.warning("SKIP_TEE enabled — running without TEE authentication")
+        else:
+            self._init_tee(hotkey)
+
+        self.session = requests.Session()
+        if self._cert_path and self._key_path:
+            self.session.cert = (self._cert_path, self._key_path)
+        retry = Retry(
+            total=None,
+            backoff_factor=5,
+            backoff_max=300,
+            status_forcelist=[502, 503, 504],
+        )
+        self.session.mount("http://", HTTPAdapter(max_retries=retry))
+        self.session.mount("https://", HTTPAdapter(max_retries=retry))
+
+    def _init_tee(self, hotkey):
         try:
             from dstack_sdk import DstackClient
             client = DstackClient(timeout=120)
@@ -50,18 +68,6 @@ class ValidatorSession:
         except Exception as e:
             bt.logging.error(f"[TEE] get_tls_key failed: {type(e).__name__}: {e}")
 
-        self.session = requests.Session()
-        if self._cert_path and self._key_path:
-            self.session.cert = (self._cert_path, self._key_path)
-        retry = Retry(
-            total=None,
-            backoff_factor=5,
-            backoff_max=300,
-            status_forcelist=[502, 503, 504],
-        )
-        self.session.mount("http://", HTTPAdapter(max_retries=retry))
-        self.session.mount("https://", HTTPAdapter(max_retries=retry))
-
     @property
     def is_tee(self) -> bool:
         return self._cert_path is not None
@@ -73,8 +79,8 @@ class ValidatorSession:
             bt.logging.error("Your TEE image is not authorized. Update your validator or contact the subnet owner.")
             raise SystemExit(1)
 
-    def get(self, path: str) -> requests.Response:
-        resp = self.session.get(f"{self.backend_url}{path}")
+    def get(self, path: str, **kwargs) -> requests.Response:
+        resp = self.session.get(f"{self.backend_url}{path}", **kwargs)
         self._check_forbidden(resp)
         return resp
 

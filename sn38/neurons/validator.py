@@ -17,6 +17,7 @@ import time
 import tempfile
 
 import numpy as np
+import torch
 import bittensor as bt
 
 from ..template.chronogpt_model import load_model
@@ -26,8 +27,16 @@ from ..template.backend_api import BackendAPI
 from ..template.validator_db import get_connection, get_cached_result, save_result, is_week_evaluated, mark_week_evaluated
 from ..template.leak import evaluate
 from ..template.quality import run_quality_duels
+from ..template.round_results import RoundResults
 
 BACKEND_URL = os.environ.get("BACKEND_URL", "http://localhost:8000")
+
+
+def _free_gpu():
+    if torch.cuda.is_available():
+        torch.cuda.empty_cache()
+    elif hasattr(torch, "mps") and torch.backends.mps.is_available():
+        torch.mps.empty_cache()
 
 
 def check_duplicate_weights(api, model_path, uid, snapshot_at):
@@ -76,6 +85,7 @@ def run_stage1(api, submissions, submission_times, config, all_years, conn):
 
             try:
                 with tempfile.TemporaryDirectory() as tmpdir:
+                    bt.logging.info(f"UID {uid}: downloading {repo_id}...")
                     path = download_model(repo_id, tmpdir, revision=revision)
 
                     if not verify_commit_sha(repo_id, revision):
@@ -89,10 +99,12 @@ def run_stage1(api, submissions, submission_times, config, all_years, conn):
                     device = get_device()
                     model = load_model(path, device)
                     param_count = count_model_params(model)
+                    bt.logging.info(f"UID {uid}: loaded {param_count / 1e6:.0f}M params")
 
                     if param_count > config["max_parameters"]:
                         bt.logging.warning(f"UID {uid}: {param_count / 1e9:.1f}B > limit, skipping")
                         del model
+                        _free_gpu()
                         continue
 
                     for year in years:
@@ -106,6 +118,7 @@ def run_stage1(api, submissions, submission_times, config, all_years, conn):
                             bt.logging.warning(f"UID {uid}: no benchmark for year {year}, skipping")
                             continue
 
+                        bt.logging.info(f"UID {uid}: evaluating year {year}...")
                         failed_leak, median_unknown = evaluate(model, device, benchmark_unknown)
                         passed_known, median_known = evaluate(model, device, benchmark_known)
                         passed = not failed_leak and passed_known
@@ -115,16 +128,22 @@ def run_stage1(api, submissions, submission_times, config, all_years, conn):
                         else:
                             score = median_unknown - median_known
                         year_scores[year] = score
-                        save_result(conn, uid, year, repo_id, passed, score)
-                        bt.logging.info(f"UID {uid} year {year}: leak={not failed_leak} known={passed_known} unknown={median_unknown:.4f} known={median_known:.4f} score={score:.4f}")
+                        save_result(conn, uid, year, repo_str, passed, score)
+                        bt.logging.info(f"UID {uid}: year {year} {'PASSED' if passed else 'FAILED'}")
+                        bt.logging.debug(f"UID {uid} year {year}: unknown={median_unknown:.4f} known={median_known:.4f} score={score:.4f}")
 
+                    elapsed = time.time() - eval_start
+                    bt.logging.info(f"UID {uid}: done in {elapsed:.0f}s")
                     del model
+                    _free_gpu()
 
+            except RuntimeError:
+                raise
             except Exception as e:
                 bt.logging.error(f"UID {uid}: {repo_id} FAILED — {type(e).__name__}")
 
         leak_scores[uid] = sum(year_scores.values()) / len(all_years)
-        bt.logging.info(f"UID {uid}: leak_score={leak_scores[uid]:.4f}")
+        bt.logging.debug(f"UID {uid}: leak_score={leak_scores[uid]:.4f}")
 
     return leak_scores
 
@@ -136,9 +155,7 @@ def qualify(leak_scores, config):
     ranked = sorted(leak_scores.items(), key=lambda x: x[1])
     qualified = [(uid, score) for uid, score in ranked if score < min_eval_score][:top_n]
 
-    bt.logging.info(f"Qualified: {len(qualified)} miners")
-    for uid, score in qualified:
-        bt.logging.info(f"  UID {uid}: {score:.4f}")
+    bt.logging.info(f"Qualified: {len(qualified)} miners — UIDs: {[uid for uid, _ in qualified]}")
 
     eval_threshold = config.get("min_eval_score", -3.0)
     eval_best = config.get("leak_epsilon", -6.0)
@@ -153,8 +170,10 @@ def run_stage2_and_score(api, leak_scores, submissions, submission_times, config
 
     if not qualified:
         owner_uid = config.get("owner_uid", 0)
-        return np.zeros(metagraph.n), None, [owner_uid], [1.0]
+        results = RoundResults.no_qualified(leak_scores, owner_uid)
+        return np.zeros(metagraph.n), None, [owner_uid], [1.0], results
 
+    win_rates = None
     if len(qualified) == 1:
         bt.logging.info("Only 1 miner qualified, skipping stage 2")
         final_scores = np.zeros(metagraph.n)
@@ -193,14 +212,19 @@ def run_stage2_and_score(api, leak_scores, submissions, submission_times, config
     uids = []
     weights = []
 
-    if winner is not None:
+    if winner is not None and winner != owner_uid:
         uids.append(winner)
         weights.append(emission_pct)
-    if emission_pct < 1.0:
+        if emission_pct < 1.0:
+            uids.append(owner_uid)
+            weights.append(1.0 - emission_pct)
+    else:
         uids.append(owner_uid)
-        weights.append(1.0 - emission_pct)
+        weights.append(1.0)
 
-    return final_scores, winner, uids, weights
+    results = RoundResults.with_winner(leak_scores, qualified, win_rates, final_scores, winner, uids, weights)
+
+    return final_scores, winner, uids, weights, results
 
 
 def run(args):
@@ -249,9 +273,11 @@ def run(args):
     # STAGE 2: Quality evaluation (round-robin)
     # =========================================
     config["owner_uid"] = owner_uid
-    final_scores, winner, uids, weights = run_stage2_and_score(
+    final_scores, winner, uids, weights, results = run_stage2_and_score(
         api, leak_scores, submissions, submission_times, config, ALL_YEARS, metagraph
     )
+
+    api.submit_eval_results(eval_round, results.to_dict())
 
     subtensor.set_weights(
         wallet=wallet, netuid=netuid,

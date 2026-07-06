@@ -43,7 +43,19 @@ class BackendAPI:
             "uid": uid,
             "snapshot_at": snapshot_at,
         })
+        if resp.status_code == 401:
+            raise RuntimeError("Backend rejected request (401 Unauthorized). Check TEE authentication.")
         return resp.json()
+
+    def submit_eval_results(self, round_num, results):
+        resp = self.session.post("/eval/results", json_data={
+            "round": round_num,
+            "results": results,
+        })
+        if resp.status_code != 200:
+            bt.logging.error(f"Failed to submit eval results: {resp.status_code}")
+        else:
+            bt.logging.info(f"Eval results submitted for round {round_num}")
 
     def get_quality_questions(self):
         resp = self.session.get("/quality/questions")

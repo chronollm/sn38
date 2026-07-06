@@ -27,6 +27,7 @@ Keep in mind that evaluation only runs once per week. Once it's finished, you're
 - Registered validator on SN38 with sufficient stake
 - [Phala Cloud](https://cloud.phala.com/) account with a TEE instance provisioned (CPU is enough for now, see above)
 - OpenAI API key (for the LLM judge in Stage 2)
+- HuggingFace token (for faster model downloads)
 
 ## Deploy
 
@@ -46,7 +47,10 @@ phala deploy \
   -t tdx.4xlarge \
   --image dstack-0.5.9 \
   -e HOTKEY_FILE_CONTENT="$(cat ~/.bittensor/wallets/validator/hotkeys/default)" \
-  -e OPENAI_API_KEY=sk-xxx
+  -e OPENAI_API_KEY=sk-xxx \
+  -e HF_TOKEN=hf_xxx \
+  --disk-size 150G \
+  --no-dev-os
 ```
 
 > **Tip**: Run `phala instance-types` to list all available instance types.
