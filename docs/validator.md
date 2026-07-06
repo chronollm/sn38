@@ -49,7 +49,7 @@ phala deploy \
   -e HOTKEY_FILE_CONTENT="$(cat ~/.bittensor/wallets/validator/hotkeys/default)" \
   -e OPENAI_API_KEY=sk-xxx \
   -e HF_TOKEN=hf_xxx \
-  --disk-size 150G
+  --disk-size 150G \
   --no-dev-os
 ```
 

@@ -212,12 +212,15 @@ def run_stage2_and_score(api, leak_scores, submissions, submission_times, config
     uids = []
     weights = []
 
-    if winner is not None:
+    if winner is not None and winner != owner_uid:
         uids.append(winner)
         weights.append(emission_pct)
-    if emission_pct < 1.0:
+        if emission_pct < 1.0:
+            uids.append(owner_uid)
+            weights.append(1.0 - emission_pct)
+    else:
         uids.append(owner_uid)
-        weights.append(1.0 - emission_pct)
+        weights.append(1.0)
 
     results = RoundResults.with_winner(leak_scores, qualified, win_rates, final_scores, winner, uids, weights)
 

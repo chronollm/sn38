@@ -188,6 +188,13 @@ def test_emission_split_matches_config(run_stage2):
     assert weights[uids.index(0)] == 1.0 - emission_pct
     assert abs(sum(weights) - 1.0) < 1e-9
 
+def test_winner_is_owner_gets_full(run_stage2):
+    """When winner is also the owner, they get 100%."""
+    _, winner, uids, weights, _ = run_stage2(config_override={"owner_uid": 1})
+    assert winner == 1
+    assert uids == [1]
+    assert weights == [1.0]
+
 def test_no_qualified_burns_to_owner(run_stage2):
     """No qualified miners → all emissions go to owner (burn)."""
     _, winner, uids, weights, _ = run_stage2(config_override={"min_eval_score": -100.0})
