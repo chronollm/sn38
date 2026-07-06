@@ -26,6 +26,7 @@ from ..template.backend_api import BackendAPI
 from ..template.validator_db import get_connection, get_cached_result, save_result, is_week_evaluated, mark_week_evaluated
 from ..template.leak import evaluate
 from ..template.quality import run_quality_duels
+from ..template.round_results import RoundResults
 
 BACKEND_URL = os.environ.get("BACKEND_URL", "http://localhost:8000")
 
@@ -116,7 +117,7 @@ def run_stage1(api, submissions, submission_times, config, all_years, conn):
                             score = median_unknown - median_known
                         year_scores[year] = score
                         save_result(conn, uid, year, repo_id, passed, score)
-                        bt.logging.info(f"UID {uid} year {year}: leak={not failed_leak} known={passed_known} unknown={median_unknown:.4f} known={median_known:.4f} score={score:.4f}")
+                        bt.logging.debug(f"UID {uid} year {year}: leak={not failed_leak} known={passed_known} unknown={median_unknown:.4f} known={median_known:.4f} score={score:.4f}")
 
                     del model
 
@@ -124,7 +125,7 @@ def run_stage1(api, submissions, submission_times, config, all_years, conn):
                 bt.logging.error(f"UID {uid}: {repo_id} FAILED — {type(e).__name__}")
 
         leak_scores[uid] = sum(year_scores.values()) / len(all_years)
-        bt.logging.info(f"UID {uid}: leak_score={leak_scores[uid]:.4f}")
+        bt.logging.debug(f"UID {uid}: leak_score={leak_scores[uid]:.4f}")
 
     return leak_scores
 
@@ -136,9 +137,7 @@ def qualify(leak_scores, config):
     ranked = sorted(leak_scores.items(), key=lambda x: x[1])
     qualified = [(uid, score) for uid, score in ranked if score < min_eval_score][:top_n]
 
-    bt.logging.info(f"Qualified: {len(qualified)} miners")
-    for uid, score in qualified:
-        bt.logging.info(f"  UID {uid}: {score:.4f}")
+    bt.logging.info(f"Qualified: {len(qualified)} miners — UIDs: {[uid for uid, _ in qualified]}")
 
     eval_threshold = config.get("min_eval_score", -3.0)
     eval_best = config.get("leak_epsilon", -6.0)
@@ -153,8 +152,10 @@ def run_stage2_and_score(api, leak_scores, submissions, submission_times, config
 
     if not qualified:
         owner_uid = config.get("owner_uid", 0)
-        return np.zeros(metagraph.n), None, [owner_uid], [1.0]
+        results = RoundResults.no_qualified(leak_scores, owner_uid)
+        return np.zeros(metagraph.n), None, [owner_uid], [1.0], results
 
+    win_rates = None
     if len(qualified) == 1:
         bt.logging.info("Only 1 miner qualified, skipping stage 2")
         final_scores = np.zeros(metagraph.n)
@@ -200,7 +201,9 @@ def run_stage2_and_score(api, leak_scores, submissions, submission_times, config
         uids.append(owner_uid)
         weights.append(1.0 - emission_pct)
 
-    return final_scores, winner, uids, weights
+    results = RoundResults.with_winner(leak_scores, qualified, win_rates, final_scores, winner, uids, weights)
+
+    return final_scores, winner, uids, weights, results
 
 
 def run(args):
@@ -249,9 +252,11 @@ def run(args):
     # STAGE 2: Quality evaluation (round-robin)
     # =========================================
     config["owner_uid"] = owner_uid
-    final_scores, winner, uids, weights = run_stage2_and_score(
+    final_scores, winner, uids, weights, results = run_stage2_and_score(
         api, leak_scores, submissions, submission_times, config, ALL_YEARS, metagraph
     )
+
+    api.submit_eval_results(eval_round, results.to_dict())
 
     subtensor.set_weights(
         wallet=wallet, netuid=netuid,
