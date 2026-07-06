@@ -17,6 +17,7 @@ import time
 import tempfile
 
 import numpy as np
+import torch
 import bittensor as bt
 
 from ..template.chronogpt_model import load_model
@@ -29,6 +30,13 @@ from ..template.quality import run_quality_duels
 from ..template.round_results import RoundResults
 
 BACKEND_URL = os.environ.get("BACKEND_URL", "http://localhost:8000")
+
+
+def _free_gpu():
+    if torch.cuda.is_available():
+        torch.cuda.empty_cache()
+    elif hasattr(torch, "mps") and torch.backends.mps.is_available():
+        torch.mps.empty_cache()
 
 
 def check_duplicate_weights(api, model_path, uid, snapshot_at):
@@ -77,6 +85,7 @@ def run_stage1(api, submissions, submission_times, config, all_years, conn):
 
             try:
                 with tempfile.TemporaryDirectory() as tmpdir:
+                    bt.logging.info(f"UID {uid}: downloading {repo_id}...")
                     path = download_model(repo_id, tmpdir, revision=revision)
 
                     if not verify_commit_sha(repo_id, revision):
@@ -90,10 +99,12 @@ def run_stage1(api, submissions, submission_times, config, all_years, conn):
                     device = get_device()
                     model = load_model(path, device)
                     param_count = count_model_params(model)
+                    bt.logging.info(f"UID {uid}: loaded {param_count / 1e6:.0f}M params")
 
                     if param_count > config["max_parameters"]:
                         bt.logging.warning(f"UID {uid}: {param_count / 1e9:.1f}B > limit, skipping")
                         del model
+                        _free_gpu()
                         continue
 
                     for year in years:
@@ -107,6 +118,7 @@ def run_stage1(api, submissions, submission_times, config, all_years, conn):
                             bt.logging.warning(f"UID {uid}: no benchmark for year {year}, skipping")
                             continue
 
+                        bt.logging.info(f"UID {uid}: evaluating year {year}...")
                         failed_leak, median_unknown = evaluate(model, device, benchmark_unknown)
                         passed_known, median_known = evaluate(model, device, benchmark_known)
                         passed = not failed_leak and passed_known
@@ -116,11 +128,17 @@ def run_stage1(api, submissions, submission_times, config, all_years, conn):
                         else:
                             score = median_unknown - median_known
                         year_scores[year] = score
-                        save_result(conn, uid, year, repo_id, passed, score)
-                        bt.logging.debug(f"UID {uid} year {year}: leak={not failed_leak} known={passed_known} unknown={median_unknown:.4f} known={median_known:.4f} score={score:.4f}")
+                        save_result(conn, uid, year, repo_str, passed, score)
+                        bt.logging.info(f"UID {uid}: year {year} {'PASSED' if passed else 'FAILED'}")
+                        bt.logging.debug(f"UID {uid} year {year}: unknown={median_unknown:.4f} known={median_known:.4f} score={score:.4f}")
 
+                    elapsed = time.time() - eval_start
+                    bt.logging.info(f"UID {uid}: done in {elapsed:.0f}s")
                     del model
+                    _free_gpu()
 
+            except RuntimeError:
+                raise
             except Exception as e:
                 bt.logging.error(f"UID {uid}: {repo_id} FAILED — {type(e).__name__}")
 

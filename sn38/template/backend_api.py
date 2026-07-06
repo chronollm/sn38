@@ -43,6 +43,8 @@ class BackendAPI:
             "uid": uid,
             "snapshot_at": snapshot_at,
         })
+        if resp.status_code == 401:
+            raise RuntimeError("Backend rejected request (401 Unauthorized). Check TEE authentication.")
         return resp.json()
 
     def submit_eval_results(self, round_num, results):

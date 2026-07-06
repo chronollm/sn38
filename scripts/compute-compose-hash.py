@@ -32,7 +32,7 @@ PHALA_DEFAULTS = {
     "runner": "docker-compose",
     "manifest_version": 2,
     "name": "",
-    "allowed_envs": ["HOTKEY_FILE_CONTENT", "OPENAI_API_KEY"],
+    "allowed_envs": ["HOTKEY_FILE_CONTENT", "OPENAI_API_KEY", "HF_TOKEN"],
     "kms_enabled": True,
     "local_key_provider_enabled": False,
     "no_instance_id": False,

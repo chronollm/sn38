@@ -1,7 +1,7 @@
 version: '3.8'
 services:
   validator:
-    image: chronollm/sn38-validator@sha256:31eec4ab27a897fcc244df19fe408d485f360b55043ffa131c1a058a10881047
+    image: chronollm/sn38-validator@sha256:16bc0b1a24a806f19a3fb42195805dcf92bed9672e236857dbcfd2fc7b62bcf6
     restart: "no"
     volumes:
       - /var/run/dstack.sock:/var/run/dstack.sock
@@ -9,9 +9,11 @@ services:
     environment:
       - NETUID=38
       - SUBTENSOR_NETWORK=finney
+      - BACKEND_URL=https://api.chronollm.com
       # This secret is encrypted client-side by Phala CLI before transmission
       - HOTKEY_FILE_CONTENT=${HOTKEY_FILE_CONTENT}
       - OPENAI_API_KEY=${OPENAI_API_KEY}
+      - HF_TOKEN=${HF_TOKEN}
 #    deploy:
 #      resources:
 #        reservations:
