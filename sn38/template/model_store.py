@@ -1,10 +1,15 @@
 """Model storage layer — commit metadata on-chain, download models from HuggingFace."""
 
 import json
+import multiprocessing as mp
+import os
 import re
-import torch
+import time
+from typing import Optional
+
 import bittensor as bt
-from huggingface_hub import snapshot_download, hf_hub_download, HfApi
+import torch
+from huggingface_hub import HfApi, hf_hub_download, snapshot_download
 
 from .constants import ALL_YEARS
 
@@ -31,7 +36,7 @@ def validate_models_json(models: dict) -> list[int]:
     return [y for y in ALL_YEARS if str(y) not in models]
 
 
-def upload_models_json(models: dict, dataset_repo: str, token: str = None):
+def upload_models_json(models: dict, dataset_repo: str, token: Optional[str] = None):
     """Upload models.json to a HuggingFace dataset repo."""
     api = HfApi(token=token)
     api.create_repo(dataset_repo, repo_type="dataset", exist_ok=True)
@@ -57,9 +62,67 @@ def commit_metadata(subtensor, wallet, netuid: int, data: str):
     bt.logging.info(f"Committed on-chain: {data[:80]}...")
 
 
-def download_model(repo_id: str, local_dir: str, revision: str = None) -> str:
-    """Download a model from HuggingFace. Returns the local path."""
-    return snapshot_download(repo_id=repo_id, local_dir=local_dir, revision=revision)
+def _do_download_model(
+    repo_id: str,
+    revision: Optional[str],
+    local_dir: str,
+):
+    snapshot_download(repo_id=repo_id, revision=revision, local_dir=local_dir)
+
+    # bt.logging is holding a thread hostage which raise an exception on exit...
+    os._exit(0)
+
+
+def _dir_size(path):
+    total = 0
+    for root, _, files in os.walk(path):
+        for f in files:
+            try:
+                total += os.path.getsize(os.path.join(root, f))
+            except OSError:
+                pass
+
+    return total
+
+
+def download_model(
+    repo_id: str,
+    local_dir: str,
+    revision: Optional[str] = None,
+    stall_timeout: int = 60,
+    max_retries: int = 5,
+    watchdog_interval: int = 5,
+) -> str:
+    for _ in range(max_retries):
+        ctx = mp.get_context("spawn")
+        process = ctx.Process(target=_do_download_model, args=(repo_id, revision, local_dir))
+        process.start()
+
+        last_size = -1
+        last_progress_time = time.time()
+
+        while process.is_alive():
+            time.sleep(watchdog_interval)
+
+            size = _dir_size(local_dir)
+            if size != last_size:
+                last_size = size
+                last_progress_time = time.time()
+
+            elif time.time() - last_progress_time > stall_timeout:
+                bt.logging.info(f"Stalled ({size} bytes, no growth for {stall_timeout}s), killing and retrying...")
+                process.kill()
+                process.join()
+                break
+
+        else:
+            process.join()
+            if process.exitcode == 0:
+                return local_dir
+
+            bt.logging.info(f"Process exited with code {process.exitcode}, retrying...")
+
+    raise RuntimeError(f"Download of {repo_id} failed after {max_retries} attempts")
 
 
 def parse_repo(repo_str):

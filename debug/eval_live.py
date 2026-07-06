@@ -11,17 +11,17 @@ Usage:
 """
 
 import argparse
+import os
 import random
 import sys
-import os
+import tempfile
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
 import torch
-from huggingface_hub import snapshot_download
 from sn38.template.chronogpt_model import load_model
-from sn38.template.leak import evaluate, _score_batch, _score_prompt
-from sn38.template.model_store import parse_repo, get_device
+from sn38.template.leak import _score_batch, _score_prompt, evaluate
+from sn38.template.model_store import download_model, get_device, parse_repo
 
 MODELS = {
     2013: "manelalab/chrono-gpt-v1-20131231@8e3e454b59a27d96ed3773f5c58a10e84e4f3f12",
@@ -56,8 +56,10 @@ def main():
     print(f"Device: {device}")
     print(f"Model: {repo_id} (cutoff {args.cutoff})")
 
-    path = snapshot_download(repo_id=repo_id, revision=revision)
-    model = load_model(path, device)
+    with tempfile.TemporaryDirectory() as tmpdir:
+        path = download_model(repo_id, tmpdir, revision=revision)
+        model = load_model(path, device)
+
     param_count = sum(p.numel() for p in model.parameters())
     print(f"Loaded: {param_count / 1e6:.0f}M params\n")
 
