@@ -60,11 +60,12 @@ def run_stage1(api, submissions, submission_times, config, all_years, conn):
     # Evaluate oldest submissions first so the first submitter claims the weight hash
     for uid in sorted(submissions.keys(), key=lambda u: submission_times.get(u, "9999")):
         models = submissions[uid]
-        bt.logging.info(f"UID {uid}: {len(models)} years")
+        bt.logging.info(f"UID {uid}: {len(models)} years submitted")
 
         repo_to_years = {}
         year_scores = {year: WORST_SCORE for year in all_years}
 
+        cached_count = 0
         for year in all_years:
             repo_id = models.get(str(year))
             if not repo_id:
@@ -73,8 +74,12 @@ def run_stage1(api, submissions, submission_times, config, all_years, conn):
             if cached is not None:
                 _, score = cached
                 year_scores[year] = score
+                cached_count += 1
                 continue
             repo_to_years.setdefault(repo_id, []).append(year)
+
+        if cached_count > 0:
+            bt.logging.info(f"UID {uid}: {cached_count} scores loaded from cache")
 
         for repo_str, years in repo_to_years.items():
             repo_id, revision = parse_repo(repo_str)
@@ -88,11 +93,17 @@ def run_stage1(api, submissions, submission_times, config, all_years, conn):
                     bt.logging.info(f"UID {uid}: downloading {repo_id}...")
                     path = download_model(repo_id, tmpdir, revision=revision)
 
+                    def fail_repo_years():
+                        for year in years:
+                            save_result(conn, uid, year, repo_str, False, WORST_SCORE)
+
                     if not verify_commit_sha(repo_id, revision):
                         bt.logging.warning(f"UID {uid}: revision {revision} is not a real commit SHA, skipping")
+                        fail_repo_years()
                         continue
 
                     if not check_duplicate_weights(api, path, uid, submission_times.get(uid, "")):
+                        fail_repo_years()
                         continue
 
                     eval_start = time.time()
@@ -105,6 +116,7 @@ def run_stage1(api, submissions, submission_times, config, all_years, conn):
                         bt.logging.warning(f"UID {uid}: {param_count / 1e9:.1f}B > limit, skipping")
                         del model
                         _free_gpu()
+                        fail_repo_years()
                         continue
 
                     for year in years:
