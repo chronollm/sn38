@@ -1,6 +1,7 @@
 """Model storage layer — commit metadata on-chain, download models from HuggingFace."""
 
 import json
+import logging
 import multiprocessing as mp
 import os
 import re
@@ -9,7 +10,6 @@ from typing import Optional
 
 import bittensor as bt
 import torch
-import logging
 from huggingface_hub import HfApi, hf_hub_download, snapshot_download
 
 from .constants import ALL_YEARS
@@ -67,8 +67,10 @@ def commit_metadata(subtensor, wallet, netuid: int, data: str):
 
 
 EXIT_OK = 0
-EXIT_NOT_FOUND = 2
 EXIT_ERROR = 1
+EXIT_PRIVATE_OR_MISSING = 10
+EXIT_GATED = 11
+EXIT_BAD_REVISION = 12
 
 
 def _do_download_model(
@@ -76,11 +78,20 @@ def _do_download_model(
     revision: Optional[str],
     local_dir: str,
 ):
-    from huggingface_hub.errors import RepositoryNotFoundError
+    from huggingface_hub.errors import GatedRepoError, HfHubHTTPError, RepositoryNotFoundError, RevisionNotFoundError
     try:
         snapshot_download(repo_id=repo_id, revision=revision, local_dir=local_dir)
+    except GatedRepoError:
+        os._exit(EXIT_GATED)
     except RepositoryNotFoundError:
-        os._exit(EXIT_NOT_FOUND)
+        os._exit(EXIT_PRIVATE_OR_MISSING)
+    except RevisionNotFoundError:
+        os._exit(EXIT_BAD_REVISION)
+    except HfHubHTTPError as error:
+        if error.response is not None and error.response.status_code in (401, 403):
+            os._exit(EXIT_PRIVATE_OR_MISSING)
+
+        os._exit(EXIT_ERROR)
     except Exception:
         os._exit(EXIT_ERROR)
 
@@ -117,7 +128,9 @@ def download_model(
         last_progress_time = time.time()
 
         while process.is_alive():
-            time.sleep(watchdog_interval)
+            process.join(timeout=watchdog_interval)
+            if not process.is_alive():
+                continue
 
             size = _dir_size(local_dir)
             if size != last_size:
@@ -132,12 +145,19 @@ def download_model(
 
         else:
             process.join()
-            if process.exitcode == 0:
+
+            exit_code = process.exitcode
+            if exit_code == EXIT_OK:
                 return local_dir
 
-            if process.exitcode == EXIT_NOT_FOUND:
-                raise OSError(f"Repository {repo_id} not found")
-            bt.logging.warning(f"Download process exited with code {process.exitcode}, retrying...")
+            elif exit_code == EXIT_PRIVATE_OR_MISSING:
+                raise FileNotFoundError(f"{repo_id} does not exist or is private (no access with current token)")
+            elif exit_code == EXIT_GATED:
+                raise PermissionError(f"{repo_id} is gated (no access with current token)")
+            elif exit_code == EXIT_BAD_REVISION:
+                raise ValueError(f"Revision {revision!r} not found for {repo_id}")
+
+            bt.logging.warning(f"Download process exited with code {exit_code}, retrying...")
 
     raise RuntimeError(f"Download of {repo_id} failed after {max_retries} attempts")
 

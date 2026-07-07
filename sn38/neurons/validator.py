@@ -88,14 +88,14 @@ def run_stage1(api, submissions, submission_times, config, all_years, conn):
                 bt.logging.warning(f"UID {uid}: {repo_str} too large, skipping")
                 continue
 
+            def fail_repo_years():
+                for year in years:
+                    save_result(conn, uid, year, repo_str, False, WORST_SCORE)
+
             try:
                 with tempfile.TemporaryDirectory() as tmpdir:
                     bt.logging.info(f"UID {uid}: downloading {repo_id}...")
                     path = download_model(repo_id, tmpdir, revision=revision)
-
-                    def fail_repo_years():
-                        for year in years:
-                            save_result(conn, uid, year, repo_str, False, WORST_SCORE)
 
                     if not verify_commit_sha(repo_id, revision):
                         bt.logging.warning(f"UID {uid}: revision {revision} is not a real commit SHA, skipping")
