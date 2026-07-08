@@ -1,11 +1,14 @@
 """SQLite cache for validator evaluation results."""
 
+import os
 import sqlite3
 
-DB_PATH = "validator_cache.db"
+DB_PATH = os.path.join(os.environ.get("DATA_DIR", "/app/data"), "validator_cache.db")
 
 
 def get_connection():
+    import bittensor as bt
+    bt.logging.info(f"Cache DB: {DB_PATH}")
     conn = sqlite3.connect(DB_PATH)
     conn.execute("""
         CREATE TABLE IF NOT EXISTS evaluations (
