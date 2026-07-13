@@ -115,7 +115,7 @@ def download_model(
     repo_id: str,
     local_dir: str,
     revision: Optional[str] = None,
-    stall_timeout: int = 60,
+    stall_timeout: int = 240,
     max_retries: int = 5,
     watchdog_interval: int = 5,
 ) -> str:
