@@ -92,7 +92,8 @@ def _do_download_model(
             os._exit(EXIT_PRIVATE_OR_MISSING)
 
         os._exit(EXIT_ERROR)
-    except Exception:
+    except Exception as exception:
+        print(f"[internal] Download failed: {exception}")
         os._exit(EXIT_ERROR)
 
     # bt.logging is holding a thread hostage which raises an exception on exit...
