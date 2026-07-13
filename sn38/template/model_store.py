@@ -15,6 +15,7 @@ from huggingface_hub import HfApi, hf_hub_download, snapshot_download
 from .constants import ALL_YEARS
 
 os.environ.setdefault("HF_HUB_DISABLE_XET", "1")
+os.environ.setdefault("HF_HUB_ENABLE_HF_TRANSFER", "1")
 
 if os.environ.get("HF_DEBUG", "").lower() in ("1", "true"):
     logging.getLogger("huggingface_hub").setLevel(logging.DEBUG)
