@@ -7,13 +7,15 @@ import tiktoken
 
 logger = logging.getLogger(__name__)
 
-tokenizer = tiktoken.get_encoding("gpt2")
-PAD_TOKEN = tokenizer.encode("<|endoftext|>", allowed_special={"<|endoftext|>"})[0]
+from .model_loader import encode as _encode, pad_token as _pad_token
+
+_default_tokenizer = tiktoken.get_encoding("gpt2")
 
 
-def _score_prompt(model, device, prompt, phrase):
-    prompt_tokens = tokenizer.encode(prompt)
-    phrase_tokens = tokenizer.encode(" " + phrase)
+def _score_prompt(model, device, prompt, phrase, tokenizer=None):
+    tokenizer = tokenizer or _default_tokenizer
+    prompt_tokens = _encode(tokenizer, prompt)
+    phrase_tokens = _encode(tokenizer, " " + phrase)
 
     if not prompt_tokens or not phrase_tokens:
         return -10.0
@@ -32,17 +34,20 @@ def _score_prompt(model, device, prompt, phrase):
     return total / len(phrase_tokens)
 
 
-def _score_batch(model, device, items):
+def _score_batch(model, device, items, tokenizer=None):
     """Score all items in batched forward passes."""
     if not items:
         return []
 
+    tokenizer = tokenizer or _default_tokenizer
+    pad_token = _pad_token(tokenizer)
+
     all_prompt_tokens = []
     all_phrase_tokens = []
     for item in items:
-        prompt_tokens = tokenizer.encode(item["prompt"])
-        phrase_tokens = tokenizer.encode(" " + item["phrase"])
-        all_prompt_tokens.append(prompt_tokens if prompt_tokens else [PAD_TOKEN])
+        prompt_tokens = _encode(tokenizer, item["prompt"])
+        phrase_tokens = _encode(tokenizer, " " + item["phrase"])
+        all_prompt_tokens.append(prompt_tokens if prompt_tokens else [pad_token])
         all_phrase_tokens.append(phrase_tokens if phrase_tokens else [])
 
     max_phrase_len = max(len(phrase_tokens) for phrase_tokens in all_phrase_tokens) if all_phrase_tokens else 0
@@ -58,7 +63,7 @@ def _score_batch(model, device, items):
 
             seqs = [current[i] for i in active]
             max_len = max(len(s) for s in seqs)
-            padded = [s + [PAD_TOKEN] * (max_len - len(s)) for s in seqs]
+            padded = [s + [pad_token] * (max_len - len(s)) for s in seqs]
             lengths = [len(s) for s in seqs]
 
             input_ids = torch.tensor(padded, dtype=torch.long, device=device)
@@ -78,7 +83,7 @@ def _score_batch(model, device, items):
     return [t / c if c > 0 else -10.0 for t, c in zip(totals, counts)]
 
 
-def evaluate(model, device, benchmark):
+def evaluate(model, device, benchmark, tokenizer=None):
     """Validate chronological consistency. Returns (exceeded_threshold, median)."""
     items = benchmark.get("items", [])
 
@@ -88,7 +93,7 @@ def evaluate(model, device, benchmark):
     threshold = benchmark.get("threshold", 0.10)
     epsilon = benchmark.get("epsilon", -6.0)
 
-    scores = _score_batch(model, device, items)
+    scores = _score_batch(model, device, items, tokenizer)
     median = sorted(scores)[len(scores) // 2]
     failed = sum(1 for s in scores if s > epsilon)
     ratio = failed / len(scores)
