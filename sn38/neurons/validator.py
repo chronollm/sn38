@@ -256,9 +256,6 @@ def run(args):
     owner_uid = NETWORKS[args.network]["owner_uid"]
 
     conn = get_connection()
-    deleted = cleanup_after_uid(conn, 230)
-    if deleted:
-        bt.logging.info(f"Cleanup: deleted {deleted} rows after UID 230")
     wallet = bt.Wallet(name=args.wallet_name, hotkey=args.wallet_hotkey)
     subtensor = bt.Subtensor(network=args.network)
     metagraph = subtensor.metagraph(netuid=netuid)
