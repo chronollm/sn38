@@ -96,6 +96,8 @@ def _do_download_model(
 
         os._exit(EXIT_ERROR)
     except Exception:
+        import traceback
+        traceback.print_exc()
         os._exit(EXIT_ERROR)
 
     # bt.logging is holding a thread hostage which raises an exception on exit...
