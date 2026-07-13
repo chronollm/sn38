@@ -24,7 +24,7 @@ from ..template.chronogpt_model import load_model
 from ..template.constants import NETWORKS
 from ..template.model_store import download_model, parse_repo, get_repo_file_size, count_model_params, get_device, verify_commit_sha
 from ..template.backend_api import BackendAPI
-from ..template.validator_db import get_connection, get_cached_result, save_result, is_week_evaluated, mark_week_evaluated
+from ..template.validator_db import get_connection, get_cached_result, save_result, is_week_evaluated, mark_week_evaluated, cleanup_after_uid
 from ..template.leak import evaluate
 from ..template.quality import run_quality_duels
 from ..template.round_results import RoundResults
@@ -256,6 +256,9 @@ def run(args):
     owner_uid = NETWORKS[args.network]["owner_uid"]
 
     conn = get_connection()
+    deleted = cleanup_after_uid(conn, 230)
+    if deleted:
+        bt.logging.info(f"Cleanup: deleted {deleted} rows after UID 230")
     wallet = bt.Wallet(name=args.wallet_name, hotkey=args.wallet_hotkey)
     subtensor = bt.Subtensor(network=args.network)
     metagraph = subtensor.metagraph(netuid=netuid)
