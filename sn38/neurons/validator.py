@@ -81,8 +81,9 @@ def run_stage1(api, submissions, submission_times, config, all_years, conn, benc
     WORST_SCORE = 0.0
     leak_scores = {}
 
-    # Evaluate oldest submissions first so the first submitter claims the weight hash
-    for uid in sorted(submissions.keys(), key=lambda u: submission_times.get(u, "9999")):
+    sorted_uids = sorted(submissions.keys(), key=lambda u: submission_times.get(u, "9999"))
+    total = len(sorted_uids)
+    for i, uid in enumerate(sorted_uids):
         models = submissions[uid]
         bt.logging.info(f"UID {uid}: {len(models)} years submitted")
 
@@ -180,6 +181,7 @@ def run_stage1(api, submissions, submission_times, config, all_years, conn, benc
 
         leak_scores[uid] = sum(year_scores.values()) / len(all_years)
         bt.logging.debug(f"UID {uid}: leak_score={leak_scores[uid]:.4f}")
+        bt.logging.info(f"Stage 1 progress: {i + 1}/{total} ({(i + 1) / total:.0%})")
 
     _sync_eval_details(api, conn)
     return leak_scores
