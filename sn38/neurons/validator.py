@@ -62,7 +62,7 @@ def check_duplicate_weights(api, model_path, uid, snapshot_at):
     return True
 
 
-def run_stage1(api, submissions, submission_times, config, all_years, conn, benchmarks):
+def run_stage1(api, submissions, submission_times, config, all_years, conn, benchmarks, eval_round):
     """Evaluate all miners for leak detection. Returns {uid: score}."""
     WORST_SCORE = 0.0
     leak_scores = {}
@@ -146,6 +146,7 @@ def run_stage1(api, submissions, submission_times, config, all_years, conn, benc
                             score = median_unknown - median_known
                         year_scores[year] = score
                         save_result(conn, uid, year, repo_str, passed, score)
+                        api.submit_eval_detail(eval_round, uid, year, repo_str, passed, score)
                         bt.logging.info(f"UID {uid}: year {year} {'PASSED' if passed else 'FAILED'}")
                         bt.logging.debug(f"UID {uid} year {year}: unknown={median_unknown:.4f} known={median_known:.4f} score={score:.4f}")
 
@@ -291,7 +292,7 @@ def run(args):
     # STAGE 1: Leak detection
     # =========================================
     bt.logging.info("=== Stage 1: Leak detection ===")
-    leak_scores = run_stage1(api, submissions, submission_times, config, ALL_YEARS, conn, benchmarks)
+    leak_scores = run_stage1(api, submissions, submission_times, config, ALL_YEARS, conn, benchmarks, eval_round)
 
     # =========================================
     # STAGE 2: Quality evaluation (round-robin)
