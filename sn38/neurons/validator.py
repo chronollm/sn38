@@ -24,7 +24,7 @@ from ..template.chronogpt_model import load_model
 from ..template.constants import NETWORKS
 from ..template.model_store import download_model, parse_repo, get_repo_file_size, count_model_params, get_device, verify_commit_sha
 from ..template.backend_api import BackendAPI
-from ..template.validator_db import get_connection, get_cached_result, save_result, is_week_evaluated, mark_week_evaluated, cleanup_after_uid
+from ..template.validator_db import get_connection, get_cached_result, save_result, is_week_evaluated, mark_week_evaluated, cleanup_after_uid, get_unsynced_eval_details, mark_synced
 from ..template.leak import evaluate
 from ..template.quality import run_quality_duels
 from ..template.round_results import RoundResults
@@ -37,6 +37,20 @@ def _free_gpu():
         torch.cuda.empty_cache()
     elif hasattr(torch, "mps") and torch.backends.mps.is_available():
         torch.mps.empty_cache()
+
+
+def _sync_eval_details(api, conn):
+    unsynced = get_unsynced_eval_details(conn)
+    if not unsynced:
+        return
+    bt.logging.info(f"Syncing {len(unsynced)} eval details to backend...")
+    synced = 0
+    for row in unsynced:
+        if api.submit_eval_detail(row["round"], row["uid"], row["year"], row["repo_id"],
+                                  row["passed"], row["score"], row["score_unknown"], row["score_known"]):
+            mark_synced(conn, row["uid"], row["year"], row["repo_id"], row["round"])
+            synced += 1
+    bt.logging.info(f"Sync complete: {synced}/{len(unsynced)}")
 
 
 def _preload_benchmarks(api, all_years):
@@ -100,8 +114,9 @@ def run_stage1(api, submissions, submission_times, config, all_years, conn, benc
 
             def fail_repo_years():
                 for year in years:
-                    save_result(conn, uid, year, repo_str, False, WORST_SCORE)
-                    api.submit_eval_detail(eval_round, uid, year, repo_str, False, WORST_SCORE, 0.0, 0.0)
+                    save_result(conn, uid, year, repo_str, False, WORST_SCORE, 0.0, 0.0, eval_round)
+                    if api.submit_eval_detail(eval_round, uid, year, repo_str, False, WORST_SCORE, 0.0, 0.0):
+                        mark_synced(conn, uid, year, repo_str, eval_round)
 
             try:
                 with tempfile.TemporaryDirectory() as tmpdir:
@@ -146,8 +161,9 @@ def run_stage1(api, submissions, submission_times, config, all_years, conn, benc
                         else:
                             score = median_unknown - median_known
                         year_scores[year] = score
-                        save_result(conn, uid, year, repo_str, passed, score)
-                        api.submit_eval_detail(eval_round, uid, year, repo_str, passed, score, median_unknown, median_known)
+                        save_result(conn, uid, year, repo_str, passed, score, median_unknown, median_known, eval_round)
+                        if api.submit_eval_detail(eval_round, uid, year, repo_str, passed, score, median_unknown, median_known):
+                            mark_synced(conn, uid, year, repo_str, eval_round)
                         bt.logging.info(f"UID {uid}: year {year} {'PASSED' if passed else 'FAILED'}")
                         bt.logging.debug(f"UID {uid} year {year}: unknown={median_unknown:.4f} known={median_known:.4f} score={score:.4f}")
 
@@ -165,6 +181,7 @@ def run_stage1(api, submissions, submission_times, config, all_years, conn, benc
         leak_scores[uid] = sum(year_scores.values()) / len(all_years)
         bt.logging.debug(f"UID {uid}: leak_score={leak_scores[uid]:.4f}")
 
+    _sync_eval_details(api, conn)
     return leak_scores
 
 
@@ -266,6 +283,8 @@ def run(args):
     wallet = bt.Wallet(name=args.wallet_name, hotkey=args.wallet_hotkey)
     subtensor = bt.Subtensor(network=args.network)
     metagraph = subtensor.metagraph(netuid=netuid)
+
+    _sync_eval_details(api, conn)
 
     if is_week_evaluated(conn, eval_round):
         bt.logging.info(f"Round {eval_round} already evaluated, skipping")

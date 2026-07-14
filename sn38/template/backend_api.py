@@ -57,7 +57,7 @@ class BackendAPI:
             bt.logging.info(f"Eval results submitted for round {round_num}")
 
     def submit_eval_detail(self, round_num, uid, year, repo_id, passed, score, score_unknown, score_known):
-        self.session.post("/eval/detail", json_data={
+        resp = self.session.post("/eval/detail", json_data={
             "round": round_num,
             "uid": uid,
             "year": year,
@@ -67,6 +67,7 @@ class BackendAPI:
             "score_unknown": score_unknown,
             "score_known": score_known,
         })
+        return resp.status_code == 200
 
     def get_quality_questions(self):
         resp = self.session.get("/quality/questions")
