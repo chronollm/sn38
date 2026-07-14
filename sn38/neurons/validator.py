@@ -101,6 +101,7 @@ def run_stage1(api, submissions, submission_times, config, all_years, conn, benc
             def fail_repo_years():
                 for year in years:
                     save_result(conn, uid, year, repo_str, False, WORST_SCORE)
+                    api.submit_eval_detail(eval_round, uid, year, repo_str, False, WORST_SCORE, 0.0, 0.0)
 
             try:
                 with tempfile.TemporaryDirectory() as tmpdir:
@@ -146,7 +147,7 @@ def run_stage1(api, submissions, submission_times, config, all_years, conn, benc
                             score = median_unknown - median_known
                         year_scores[year] = score
                         save_result(conn, uid, year, repo_str, passed, score)
-                        api.submit_eval_detail(eval_round, uid, year, repo_str, passed, score)
+                        api.submit_eval_detail(eval_round, uid, year, repo_str, passed, score, median_unknown, median_known)
                         bt.logging.info(f"UID {uid}: year {year} {'PASSED' if passed else 'FAILED'}")
                         bt.logging.debug(f"UID {uid} year {year}: unknown={median_unknown:.4f} known={median_known:.4f} score={score:.4f}")
 
