@@ -39,6 +39,16 @@ def _free_gpu():
         torch.mps.empty_cache()
 
 
+def _preload_benchmarks(api, all_years):
+    benchmarks = {}
+    for year in all_years:
+        benchmarks[year] = {
+            "unknown": api.get_benchmark(year),
+            "known": api.get_benchmark(year, known=True),
+        }
+    return benchmarks
+
+
 def check_duplicate_weights(api, model_path, uid, snapshot_at):
     """Check if model weights were already submitted by another miner. Returns True if allowed."""
     model_file = os.path.join(model_path, "model.safetensors")
@@ -52,7 +62,7 @@ def check_duplicate_weights(api, model_path, uid, snapshot_at):
     return True
 
 
-def run_stage1(api, submissions, submission_times, config, all_years, conn):
+def run_stage1(api, submissions, submission_times, config, all_years, conn, benchmarks):
     """Evaluate all miners for leak detection. Returns {uid: score}."""
     WORST_SCORE = 0.0
     leak_scores = {}
@@ -124,15 +134,10 @@ def run_stage1(api, submissions, submission_times, config, all_years, conn):
                             bt.logging.warning(f"UID {uid}: timeout, remaining years skipped")
                             break
 
-                        benchmark_unknown = api.get_benchmark(year)
-                        benchmark_known = api.get_benchmark(year, known=True)
-                        if not benchmark_unknown:
-                            bt.logging.warning(f"UID {uid}: no benchmark for year {year}, skipping")
-                            continue
-
+                        bench = benchmarks[year]
                         bt.logging.info(f"UID {uid}: evaluating year {year}...")
-                        failed_leak, median_unknown = evaluate(model, device, benchmark_unknown)
-                        passed_known, median_known = evaluate(model, device, benchmark_known)
+                        failed_leak, median_unknown = evaluate(model, device, bench["unknown"])
+                        passed_known, median_known = evaluate(model, device, bench["known"])
                         passed = not failed_leak and passed_known
 
                         if not passed:
@@ -277,10 +282,16 @@ def run(args):
     bt.logging.info(f"Round {eval_round}: {len(submissions)} miners")
 
     # =========================================
+    # Preload benchmarks (fail fast if backend is down)
+    # =========================================
+    benchmarks = _preload_benchmarks(api, ALL_YEARS)
+    bt.logging.info(f"Loaded benchmarks for {len(benchmarks)} years")
+
+    # =========================================
     # STAGE 1: Leak detection
     # =========================================
     bt.logging.info("=== Stage 1: Leak detection ===")
-    leak_scores = run_stage1(api, submissions, submission_times, config, ALL_YEARS, conn)
+    leak_scores = run_stage1(api, submissions, submission_times, config, ALL_YEARS, conn, benchmarks)
 
     # =========================================
     # STAGE 2: Quality evaluation (round-robin)
