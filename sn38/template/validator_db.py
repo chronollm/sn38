@@ -2,14 +2,21 @@
 
 import os
 import sqlite3
+import threading
 
 DB_PATH = os.path.join(os.environ.get("DATA_DIR", "/app/data"), "validator_cache.db")
+
+# run_stage1 prefetches the next miner's downloads on a background thread while
+# the current miner is validated/evaluated on the main thread, and both sides
+# share the same connection — sqlite3 connections aren't safe for concurrent
+# use from multiple threads, so every access below is serialized through this.
+_lock = threading.Lock()
 
 
 def get_connection():
     import bittensor as bt
     bt.logging.info(f"Cache DB: {DB_PATH}")
-    conn = sqlite3.connect(DB_PATH)
+    conn = sqlite3.connect(DB_PATH, check_same_thread=False)
     conn.execute("""
         CREATE TABLE IF NOT EXISTS evaluations (
             uid INTEGER, year INTEGER, repo_id TEXT, round INTEGER,
@@ -48,10 +55,11 @@ def _migrate(conn, bt):
 
 def get_cached_result(conn, uid: int, year: int, repo_id: str):
     """Returns (passed, score) or None if not cached."""
-    row = conn.execute(
-        "SELECT passed, score FROM evaluations WHERE uid=? AND year=? AND repo_id=?",
-        (uid, year, repo_id)
-    ).fetchone()
+    with _lock:
+        row = conn.execute(
+            "SELECT passed, score FROM evaluations WHERE uid=? AND year=? AND repo_id=?",
+            (uid, year, repo_id)
+        ).fetchone()
     if row is None:
         return None
     return bool(row[0]), row[1]
@@ -59,31 +67,35 @@ def get_cached_result(conn, uid: int, year: int, repo_id: str):
 
 def save_result(conn, uid: int, year: int, repo_id: str, passed: bool, score: float = 0.0,
                 score_unknown: float = 0.0, score_known: float = 0.0, eval_round: int = 0):
-    conn.execute(
-        """INSERT OR REPLACE INTO evaluations
-           (uid, year, repo_id, passed, score, score_unknown, score_known, round, synced)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, 0)""",
-        (uid, year, repo_id, int(passed), score, score_unknown, score_known, eval_round)
-    )
-    conn.commit()
+    with _lock:
+        conn.execute(
+            """INSERT OR REPLACE INTO evaluations
+               (uid, year, repo_id, passed, score, score_unknown, score_known, round, synced)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, 0)""",
+            (uid, year, repo_id, int(passed), score, score_unknown, score_known, eval_round)
+        )
+        conn.commit()
 
 
 def is_week_evaluated(conn, week: int) -> bool:
-    row = conn.execute("SELECT 1 FROM eval_runs WHERE week=?", (week,)).fetchone()
+    with _lock:
+        row = conn.execute("SELECT 1 FROM eval_runs WHERE week=?", (week,)).fetchone()
     return row is not None
 
 
 def mark_week_evaluated(conn, week: int):
-    conn.execute("INSERT OR IGNORE INTO eval_runs (week) VALUES (?)", (week,))
-    conn.commit()
+    with _lock:
+        conn.execute("INSERT OR IGNORE INTO eval_runs (week) VALUES (?)", (week,))
+        conn.commit()
 
 
 def get_unsynced_eval_details(conn):
     """Returns list of unsynced evaluations."""
-    rows = conn.execute(
-        "SELECT uid, year, repo_id, passed, score, score_unknown, score_known, round "
-        "FROM evaluations WHERE synced = 0"
-    ).fetchall()
+    with _lock:
+        rows = conn.execute(
+            "SELECT uid, year, repo_id, passed, score, score_unknown, score_known, round "
+            "FROM evaluations WHERE synced = 0"
+        ).fetchall()
     return [
         {"uid": r[0], "year": r[1], "repo_id": r[2], "passed": bool(r[3]),
          "score": r[4], "score_unknown": r[5], "score_known": r[6], "round": r[7]}
@@ -92,19 +104,21 @@ def get_unsynced_eval_details(conn):
 
 
 def mark_synced(conn, uid: int, year: int, repo_id: str, eval_round: int):
-    conn.execute(
-        "UPDATE evaluations SET synced = 1 WHERE uid = ? AND year = ? AND repo_id = ? AND round = ?",
-        (uid, year, repo_id, eval_round)
-    )
-    conn.commit()
+    with _lock:
+        conn.execute(
+            "UPDATE evaluations SET synced = 1 WHERE uid = ? AND year = ? AND repo_id = ? AND round = ?",
+            (uid, year, repo_id, eval_round)
+        )
+        conn.commit()
 
 
 def cleanup_after_uid(conn, uid: int):
     """Delete all evaluations created after the last evaluation of the given UID."""
-    cur = conn.execute(
-        "DELETE FROM evaluations WHERE evaluated_at > "
-        "(SELECT MAX(evaluated_at) FROM evaluations WHERE uid = ?)",
-        (uid,)
-    )
-    conn.commit()
-    return cur.rowcount
+    with _lock:
+        cur = conn.execute(
+            "DELETE FROM evaluations WHERE evaluated_at > "
+            "(SELECT MAX(evaluated_at) FROM evaluations WHERE uid = ?)",
+            (uid,)
+        )
+        conn.commit()
+        return cur.rowcount

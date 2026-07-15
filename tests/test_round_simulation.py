@@ -64,19 +64,26 @@ SUBMISSIONS = {
 }
 
 
-@pytest.fixture
-def stage1_patched(monkeypatch, tmp_path):
-    """Patch Stage 1 dependencies."""
-    for uid, (profile, repo) in MINERS.items():
-        d = tmp_path / str(uid)
-        d.mkdir(exist_ok=True)
-        (d / "model.safetensors").write_bytes(f"weights_{repo}".encode())
+MINER_REPO = {uid: repo for uid, (_, repo) in MINERS.items()}
 
+
+@pytest.fixture
+def stage1_patched(monkeypatch):
+    """Patch Stage 1 dependencies."""
     claimed_hashes = {}
 
     def fake_download(repo_id, local_dir, revision=None):
+        # Downloads now land in a per-repo throwaway tmpdir (parallel prefetch),
+        # so write the miner's weights directly into it instead of redirecting
+        # to a pre-populated fixture directory. A side-channel marker carries
+        # the uid across threads since the shared "duplicate" repo content is
+        # intentionally ambiguous (that's what the copier test relies on).
         uid = int(repo_id.split("-")[1])
-        return str(tmp_path / str(uid))
+        repo = MINER_REPO[uid]
+        with open(os.path.join(local_dir, "model.safetensors"), "wb") as f:
+            f.write(f"weights_{repo}".encode())
+        with open(os.path.join(local_dir, "_test_uid"), "w") as f:
+            f.write(str(uid))
 
     def fake_check(api, path, uid, snapshot_at):
         import hashlib
@@ -87,14 +94,16 @@ def stage1_patched(monkeypatch, tmp_path):
         return True
 
     eval_iterators = {uid: iter(PROFILES[profile]) for uid, (profile, _) in MINERS.items()}
-    current_uid = [None]
 
     def fake_load(path, device):
-        current_uid[0] = int(os.path.basename(path))
-        return MagicMock()
+        with open(os.path.join(path, "_test_uid")) as f:
+            uid = int(f.read())
+        model = MagicMock()
+        model.uid = uid
+        return model
 
     def fake_evaluate(model, device, benchmark):
-        return next(eval_iterators[current_uid[0]])
+        return next(eval_iterators[model.uid])
 
     monkeypatch.setattr("sn38.neurons.validator.download_model", fake_download)
     monkeypatch.setattr("sn38.neurons.validator.check_duplicate_weights", fake_check)
@@ -106,12 +115,17 @@ def stage1_patched(monkeypatch, tmp_path):
     monkeypatch.setattr("sn38.neurons.validator.get_cached_result", lambda c, u, y, r: None)
     monkeypatch.setattr("sn38.neurons.validator.save_result", lambda *a: None)
     monkeypatch.setattr("sn38.neurons.validator.verify_commit_sha", lambda r, v: True)
+    monkeypatch.setattr("sn38.neurons.validator.get_unsynced_eval_details", lambda conn: [])
 
 
 @pytest.fixture
 def leak_scores(stage1_patched):
-    """Run Stage 1 and return scores."""
-    return run_stage1(MagicMock(), SUBMISSIONS, SUBMISSION_TIMES, CONFIG, YEARS, conn=MagicMock())
+    """Run Stage 1 and return scores — no real model load, download, or GPU involved."""
+    benchmarks = {y: {"unknown": {}, "known": {}} for y in YEARS}
+    return run_stage1(
+        MagicMock(), SUBMISSIONS, SUBMISSION_TIMES, CONFIG, YEARS,
+        conn=MagicMock(), benchmarks=benchmarks, eval_round=1,
+    )
 
 
 # ─── Stage 1 ───

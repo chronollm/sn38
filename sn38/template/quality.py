@@ -18,6 +18,8 @@ from openai.types.chat import ChatCompletionSystemMessageParam, ChatCompletionUs
 from .chronogpt_model import load_model
 from .model_store import download_model, parse_repo, get_device
 
+TMP_DIR = os.environ.get("TMP_DIR")
+
 tokenizer = tiktoken.get_encoding("gpt2")
 EOS_TOKEN = tokenizer.encode("<|endoftext|>", allowed_special={"<|endoftext|>"})[0]
 
@@ -139,7 +141,7 @@ def _generate_for_year(uid, submissions, eval_year, questions):
 
     repo_id, revision = parse_repo(repo_str)
     try:
-        with tempfile.TemporaryDirectory() as tmpdir:
+        with tempfile.TemporaryDirectory(dir=TMP_DIR) as tmpdir:
             path = download_model(repo_id, tmpdir, revision=revision)
             model = load_model(path, get_device())
             prompts = [q["prompt"] for q in questions]
