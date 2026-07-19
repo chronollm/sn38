@@ -207,4 +207,4 @@ def load_model(model_path: str, device: torch.device) -> ChronoGPT:
         raise FileNotFoundError(f"No weights found in {model_path}")
 
     model.load_state_dict(state_dict)
-    return model.to(device)
+    return model.to(device).half()
