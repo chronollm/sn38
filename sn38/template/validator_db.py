@@ -12,10 +12,13 @@ def get_connection():
     conn = sqlite3.connect(DB_PATH)
     conn.execute("""
         CREATE TABLE IF NOT EXISTS evaluations (
-            uid INTEGER, year INTEGER, repo_id TEXT,
+            uid INTEGER, year INTEGER, repo_id TEXT, round INTEGER,
             passed INTEGER, score REAL,
+            score_unknown REAL DEFAULT 0.0,
+            score_known REAL DEFAULT 0.0,
+            synced INTEGER DEFAULT 0,
             evaluated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-            PRIMARY KEY (uid, year, repo_id)
+            PRIMARY KEY (uid, year, round)
         )
     """)
     conn.execute("""
@@ -25,7 +28,22 @@ def get_connection():
         )
     """)
     conn.commit()
+    _migrate(conn, bt)
     return conn
+
+
+def _migrate(conn, bt):
+    version = conn.execute("PRAGMA user_version").fetchone()[0]
+    if version < 1:
+        cols = {r[1] for r in conn.execute("PRAGMA table_info(evaluations)").fetchall()}
+        if "round" not in cols:
+            bt.logging.info("Migration v1: adding round, score_unknown, score_known, synced")
+            conn.execute("ALTER TABLE evaluations ADD COLUMN round INTEGER DEFAULT 2")
+            conn.execute("ALTER TABLE evaluations ADD COLUMN score_unknown REAL DEFAULT 0.0")
+            conn.execute("ALTER TABLE evaluations ADD COLUMN score_known REAL DEFAULT 0.0")
+            conn.execute("ALTER TABLE evaluations ADD COLUMN synced INTEGER DEFAULT 0")
+        conn.execute("PRAGMA user_version = 1")
+        conn.commit()
 
 
 def get_cached_result(conn, uid: int, year: int, repo_id: str):
@@ -39,12 +57,13 @@ def get_cached_result(conn, uid: int, year: int, repo_id: str):
     return bool(row[0]), row[1]
 
 
-def save_result(conn, uid: int, year: int, repo_id: str, passed: bool, score: float = 0.0):
+def save_result(conn, uid: int, year: int, repo_id: str, passed: bool, score: float = 0.0,
+                score_unknown: float = 0.0, score_known: float = 0.0, eval_round: int = 0):
     conn.execute(
         """INSERT OR REPLACE INTO evaluations
-           (uid, year, repo_id, passed, score)
-           VALUES (?, ?, ?, ?, ?)""",
-        (uid, year, repo_id, int(passed), score)
+           (uid, year, repo_id, passed, score, score_unknown, score_known, round, synced)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, 0)""",
+        (uid, year, repo_id, int(passed), score, score_unknown, score_known, eval_round)
     )
     conn.commit()
 
@@ -56,6 +75,27 @@ def is_week_evaluated(conn, week: int) -> bool:
 
 def mark_week_evaluated(conn, week: int):
     conn.execute("INSERT OR IGNORE INTO eval_runs (week) VALUES (?)", (week,))
+    conn.commit()
+
+
+def get_unsynced_eval_details(conn):
+    """Returns list of unsynced evaluations."""
+    rows = conn.execute(
+        "SELECT uid, year, repo_id, passed, score, score_unknown, score_known, round "
+        "FROM evaluations WHERE synced = 0"
+    ).fetchall()
+    return [
+        {"uid": r[0], "year": r[1], "repo_id": r[2], "passed": bool(r[3]),
+         "score": r[4], "score_unknown": r[5], "score_known": r[6], "round": r[7]}
+        for r in rows
+    ]
+
+
+def mark_synced(conn, uid: int, year: int, repo_id: str, eval_round: int):
+    conn.execute(
+        "UPDATE evaluations SET synced = 1 WHERE uid = ? AND year = ? AND repo_id = ? AND round = ?",
+        (uid, year, repo_id, eval_round)
+    )
     conn.commit()
 
 
