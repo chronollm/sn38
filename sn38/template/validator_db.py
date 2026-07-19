@@ -57,3 +57,14 @@ def is_week_evaluated(conn, week: int) -> bool:
 def mark_week_evaluated(conn, week: int):
     conn.execute("INSERT OR IGNORE INTO eval_runs (week) VALUES (?)", (week,))
     conn.commit()
+
+
+def cleanup_after_uid(conn, uid: int):
+    """Delete all evaluations created after the last evaluation of the given UID."""
+    cur = conn.execute(
+        "DELETE FROM evaluations WHERE evaluated_at > "
+        "(SELECT MAX(evaluated_at) FROM evaluations WHERE uid = ?)",
+        (uid,)
+    )
+    conn.commit()
+    return cur.rowcount

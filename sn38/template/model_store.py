@@ -14,6 +14,7 @@ from huggingface_hub import HfApi, hf_hub_download, snapshot_download
 
 from .constants import ALL_YEARS
 
+
 if os.environ.get("HF_DEBUG", "").lower() in ("1", "true"):
     logging.getLogger("huggingface_hub").setLevel(logging.DEBUG)
 
@@ -92,8 +93,9 @@ def _do_download_model(
             os._exit(EXIT_PRIVATE_OR_MISSING)
 
         os._exit(EXIT_ERROR)
-    except Exception as exception:
-        print(f"[internal] Download failed: {exception}")
+    except Exception:
+        import traceback
+        traceback.print_exc()
         os._exit(EXIT_ERROR)
 
     # bt.logging is holding a thread hostage which raises an exception on exit...
@@ -116,7 +118,7 @@ def download_model(
     repo_id: str,
     local_dir: str,
     revision: Optional[str] = None,
-    stall_timeout: int = 60,
+    stall_timeout: int = 240,
     max_retries: int = 5,
     watchdog_interval: int = 5,
 ) -> str:
