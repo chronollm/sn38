@@ -12,6 +12,7 @@ Usage:
 
 import argparse
 import hashlib
+import logging
 import os
 import time
 import tempfile
@@ -20,11 +21,14 @@ import numpy as np
 import torch
 import bittensor as bt
 
+logger = logging.getLogger(__name__)
+
 from ..template.chronogpt_model import load_model
 from ..template.constants import NETWORKS
 from ..template.model_store import download_model, parse_repo, get_repo_file_size, count_model_params, get_device, verify_commit_sha
 from ..template.backend_api import BackendAPI
 from ..template.validator_db import get_connection, get_cached_result, save_result, is_week_evaluated, mark_week_evaluated, cleanup_after_uid, get_unsynced_eval_details, mark_synced
+from ..template.cosine_gate import check_cosine_gate, load_baselines, unload_baselines
 from ..template.leak import evaluate
 from ..template.quality import run_quality_duels
 from ..template.round_results import RoundResults
@@ -43,14 +47,14 @@ def _sync_eval_details(api, conn):
     unsynced = get_unsynced_eval_details(conn)
     if not unsynced:
         return
-    bt.logging.info(f"Syncing {len(unsynced)} eval details to backend...")
+    logger.info(f"Syncing {len(unsynced)} eval details to backend...")
     synced = 0
     for row in unsynced:
         if api.submit_eval_detail(row["round"], row["uid"], row["year"], row["repo_id"],
                                   row["passed"], row["score"], row["score_unknown"], row["score_known"]):
             mark_synced(conn, row["uid"], row["year"], row["repo_id"], row["round"])
             synced += 1
-    bt.logging.info(f"Sync complete: {synced}/{len(unsynced)}")
+    logger.info(f"Sync complete: {synced}/{len(unsynced)}")
 
 
 def _preload_benchmarks(api, all_years):
@@ -71,7 +75,7 @@ def check_duplicate_weights(api, model_path, uid, snapshot_at):
     weight_hash = hashlib.sha256(open(model_file, "rb").read()).hexdigest()
     check = api.check_hash(weight_hash, uid, snapshot_at)
     if not check["allowed"]:
-        bt.logging.warning(f"UID {uid}: duplicate weights (owner: UID {check['owner_uid']}), skipping")
+        logger.warning(f"UID {uid}: duplicate weights (owner: UID {check['owner_uid']}), skipping")
         return False
     return True
 
@@ -80,12 +84,17 @@ def run_stage1(api, submissions, submission_times, config, all_years, conn, benc
     """Evaluate all miners for leak detection. Returns {uid: score}."""
     WORST_SCORE = 0.0
     leak_scores = {}
+    owner_uid = config.get("owner_uid", 0)
+
+    device = get_device()
+    logger.info("Loading baselines for cosine gate...")
+    load_baselines(all_years, device)
 
     sorted_uids = sorted(submissions.keys(), key=lambda u: submission_times.get(u, "9999"))
     total = len(sorted_uids)
     for i, uid in enumerate(sorted_uids):
         models = submissions[uid]
-        bt.logging.info(f"UID {uid}: {len(models)} years submitted")
+        logger.info(f"UID {uid}: {len(models)} years submitted")
 
         repo_to_years = {}
         year_scores = {year: WORST_SCORE for year in all_years}
@@ -104,28 +113,31 @@ def run_stage1(api, submissions, submission_times, config, all_years, conn, benc
             repo_to_years.setdefault(repo_id, []).append(year)
 
         if cached_count > 0:
-            bt.logging.info(f"UID {uid}: {cached_count} scores loaded from cache")
+            logger.info(f"UID {uid}: {cached_count} scores loaded from cache")
 
         for repo_str, years in repo_to_years.items():
             repo_id, revision = parse_repo(repo_str)
             file_size = get_repo_file_size(repo_id, revision)
             if file_size > config["max_model_bytes"]:
-                bt.logging.warning(f"UID {uid}: {repo_str} too large, skipping")
+                logger.warning(f"UID {uid}: {repo_str} too large, skipping")
                 continue
 
+            def fail_year(y):
+                save_result(conn, uid, y, repo_str, False, WORST_SCORE, 0.0, 0.0, eval_round)
+                if api.submit_eval_detail(eval_round, uid, y, repo_str, False, WORST_SCORE, 0.0, 0.0):
+                    mark_synced(conn, uid, y, repo_str, eval_round)
+
             def fail_repo_years():
-                for year in years:
-                    save_result(conn, uid, year, repo_str, False, WORST_SCORE, 0.0, 0.0, eval_round)
-                    if api.submit_eval_detail(eval_round, uid, year, repo_str, False, WORST_SCORE, 0.0, 0.0):
-                        mark_synced(conn, uid, year, repo_str, eval_round)
+                for y in years:
+                    fail_year(y)
 
             try:
                 with tempfile.TemporaryDirectory() as tmpdir:
-                    bt.logging.info(f"UID {uid}: downloading {repo_id}...")
+                    logger.info(f"UID {uid}: downloading {repo_id}...")
                     path = download_model(repo_id, tmpdir, revision=revision)
 
                     if not verify_commit_sha(repo_id, revision):
-                        bt.logging.warning(f"UID {uid}: revision {revision} is not a real commit SHA, skipping")
+                        logger.warning(f"UID {uid}: revision {revision} is not a real commit SHA, skipping")
                         fail_repo_years()
                         continue
 
@@ -134,25 +146,37 @@ def run_stage1(api, submissions, submission_times, config, all_years, conn, benc
                         continue
 
                     eval_start = time.time()
-                    device = get_device()
                     model = load_model(path, device)
                     param_count = count_model_params(model)
-                    bt.logging.info(f"UID {uid}: loaded {param_count / 1e6:.0f}M params")
+                    logger.info(f"UID {uid}: loaded {param_count / 1e6:.0f}M params")
 
                     if param_count > config["max_parameters"]:
-                        bt.logging.warning(f"UID {uid}: {param_count / 1e9:.1f}B > limit, skipping")
+                        logger.warning(f"UID {uid}: {param_count / 1e9:.1f}B > limit, skipping")
                         del model
                         _free_gpu()
                         fail_repo_years()
                         continue
 
+                    cosine_results = {}
+                    if uid != owner_uid:
+                        candidate_state = model.state_dict()
+                        for year in years:
+                            gate_passed, avg_cosine = check_cosine_gate(candidate_state, year)
+                            cosine_results[year] = gate_passed
+                            logger.info(f"UID {uid}: year {year} cosine={avg_cosine:.6f} gate={'PASS' if gate_passed else 'FAIL'}")
+                        del candidate_state
+
                     for year in years:
                         if time.time() - eval_start > config["max_eval_seconds"]:
-                            bt.logging.warning(f"UID {uid}: timeout, remaining years skipped")
+                            logger.warning(f"UID {uid}: timeout, remaining years skipped")
                             break
 
+                        if not cosine_results.get(year, True):
+                            fail_year(year)
+                            continue
+
                         bench = benchmarks[year]
-                        bt.logging.info(f"UID {uid}: evaluating year {year}...")
+                        logger.info(f"UID {uid}: evaluating year {year}...")
                         failed_leak, median_unknown = evaluate(model, device, bench["unknown"])
                         passed_known, median_known = evaluate(model, device, bench["known"])
                         passed = not failed_leak and passed_known
@@ -165,24 +189,25 @@ def run_stage1(api, submissions, submission_times, config, all_years, conn, benc
                         save_result(conn, uid, year, repo_str, passed, score, median_unknown, median_known, eval_round)
                         if api.submit_eval_detail(eval_round, uid, year, repo_str, passed, score, median_unknown, median_known):
                             mark_synced(conn, uid, year, repo_str, eval_round)
-                        bt.logging.info(f"UID {uid}: year {year} {'PASSED' if passed else 'FAILED'}")
-                        bt.logging.debug(f"UID {uid} year {year}: unknown={median_unknown:.4f} known={median_known:.4f} score={score:.4f}")
+                        logger.info(f"UID {uid}: year {year} {'PASSED' if passed else 'FAILED'}")
+                        logger.debug(f"UID {uid} year {year}: unknown={median_unknown:.4f} known={median_known:.4f} score={score:.4f}")
 
                     elapsed = time.time() - eval_start
-                    bt.logging.info(f"UID {uid}: done in {elapsed:.0f}s")
+                    logger.info(f"UID {uid}: done in {elapsed:.0f}s")
                     del model
                     _free_gpu()
 
             except RuntimeError:
                 raise
             except Exception as e:
-                bt.logging.error(f"UID {uid}: {repo_id} FAILED — {type(e).__name__}")
+                logger.error(f"UID {uid}: {repo_id} FAILED — {type(e).__name__}")
                 fail_repo_years()
 
         leak_scores[uid] = sum(year_scores.values()) / len(all_years)
-        bt.logging.debug(f"UID {uid}: leak_score={leak_scores[uid]:.4f}")
-        bt.logging.info(f"Stage 1 progress: {i + 1}/{total} ({(i + 1) / total:.0%})")
+        logger.debug(f"UID {uid}: leak_score={leak_scores[uid]:.4f}")
+        logger.info(f"Stage 1 progress: {i + 1}/{total} ({(i + 1) / total:.0%})")
 
+    unload_baselines()
     _sync_eval_details(api, conn)
     return leak_scores
 
@@ -194,7 +219,7 @@ def qualify(leak_scores, config):
     ranked = sorted(leak_scores.items(), key=lambda x: x[1])
     qualified = [(uid, score) for uid, score in ranked if score < min_eval_score][:top_n]
 
-    bt.logging.info(f"Qualified: {len(qualified)} miners — UIDs: {[uid for uid, _ in qualified]}")
+    logger.info(f"Qualified: {len(qualified)} miners — UIDs: {[uid for uid, _ in qualified]}")
 
     eval_threshold = config.get("min_eval_score", -3.0)
     eval_best = config.get("leak_epsilon", -6.0)
@@ -214,14 +239,14 @@ def run_stage2_and_score(api, leak_scores, submissions, submission_times, config
 
     win_rates = None
     if len(qualified) == 1:
-        bt.logging.info("Only 1 miner qualified, skipping stage 2")
+        logger.info("Only 1 miner qualified, skipping stage 2")
         final_scores = np.zeros(metagraph.n)
         final_scores[qualified[0][0]] = 1.0
     else:
-        bt.logging.info("=== Stage 2: Quality evaluation ===")
+        logger.info("=== Stage 2: Quality evaluation ===")
         questions = api.get_quality_questions()
         if not questions:
-            bt.logging.warning("No quality questions, skipping stage 2")
+            logger.warning("No quality questions, skipping stage 2")
             final_scores = np.zeros(metagraph.n)
             for uid, score in qualified:
                 final_scores[uid] = normalized_leak[uid]
@@ -232,7 +257,7 @@ def run_stage2_and_score(api, leak_scores, submissions, submission_times, config
             final_scores = np.zeros(metagraph.n)
             for uid, _ in qualified:
                 final_scores[uid] = leak_weight * normalized_leak[uid] + quality_weight * win_rates[uid]
-                bt.logging.info(f"UID {uid}: final={final_scores[uid]:.4f} (leak={normalized_leak[uid]:.4f} quality={win_rates[uid]:.4f})")
+                logger.info(f"UID {uid}: final={final_scores[uid]:.4f} (leak={normalized_leak[uid]:.4f} quality={win_rates[uid]:.4f})")
 
     winner = None
     if final_scores.sum() > 0:
@@ -240,10 +265,10 @@ def run_stage2_and_score(api, leak_scores, submissions, submission_times, config
         tied_uids = [uid for uid in range(metagraph.n) if final_scores[uid] == max_score]
         if len(tied_uids) > 1:
             winner = min(tied_uids, key=lambda u: submission_times.get(u, "9999"))
-            bt.logging.info(f"Tie between UIDs {tied_uids}, earliest submission wins")
+            logger.info(f"Tie between UIDs {tied_uids}, earliest submission wins")
         else:
             winner = tied_uids[0]
-        bt.logging.info(f"Winner: UID {winner} score={final_scores[winner]:.4f}")
+        logger.info(f"Winner: UID {winner} score={final_scores[winner]:.4f}")
 
     # Emission split: winner gets emission_pct, owner gets the rest
     emission_pct = config.get("emission_pct", 0.30)
@@ -267,7 +292,7 @@ def run_stage2_and_score(api, leak_scores, submissions, submission_times, config
 
 
 def run(args):
-    bt.logging.set_info()
+    logging.basicConfig(level=logging.INFO)
 
     api = BackendAPI(BACKEND_URL)
 
@@ -275,8 +300,8 @@ def run(args):
     ALL_YEARS = api.get_years()
     NUM_YEARS = len(ALL_YEARS)
     eval_round = api.get_eval_round()
-    bt.logging.info(f"Config: {config}")
-    bt.logging.info(f"Eval round: {eval_round}")
+    logger.info(f"Config: {config}")
+    logger.info(f"Eval round: {eval_round}")
 
     netuid = NETWORKS[args.network]["netuid"]
     owner_uid = NETWORKS[args.network]["owner_uid"]
@@ -289,12 +314,12 @@ def run(args):
     _sync_eval_details(api, conn)
 
     if is_week_evaluated(conn, eval_round):
-        bt.logging.info(f"Round {eval_round} already evaluated, skipping")
+        logger.info(f"Round {eval_round} already evaluated, skipping")
         return
 
     submissions, submission_times = api.get_submissions(eval_round)
     if not submissions:
-        bt.logging.info(f"Round {eval_round}: no submissions")
+        logger.info(f"Round {eval_round}: no submissions")
         mark_week_evaluated(conn, eval_round)
         return
 
@@ -302,18 +327,18 @@ def run(args):
         test_uids = set(int(u) for u in args.test_uids.split(","))
         submissions = {uid: m for uid, m in submissions.items() if uid in test_uids}
 
-    bt.logging.info(f"Round {eval_round}: {len(submissions)} miners")
+    logger.info(f"Round {eval_round}: {len(submissions)} miners")
 
     # =========================================
     # Preload benchmarks (fail fast if backend is down)
     # =========================================
     benchmarks = _preload_benchmarks(api, ALL_YEARS)
-    bt.logging.info(f"Loaded benchmarks for {len(benchmarks)} years")
+    logger.info(f"Loaded benchmarks for {len(benchmarks)} years")
 
     # =========================================
     # STAGE 1: Leak detection
     # =========================================
-    bt.logging.info("=== Stage 1: Leak detection ===")
+    logger.info("=== Stage 1: Leak detection ===")
     leak_scores = run_stage1(api, submissions, submission_times, config, ALL_YEARS, conn, benchmarks, eval_round)
 
     # =========================================
@@ -331,10 +356,10 @@ def run(args):
         uids=uids, weights=weights,
         wait_for_inclusion=False,
     )
-    bt.logging.info(f"Weights set: {dict(zip(uids, weights))}")
+    logger.info(f"Weights set: {dict(zip(uids, weights))}")
 
     mark_week_evaluated(conn, eval_round)
-    bt.logging.info("Done.")
+    logger.info("Done.")
 
 
 if __name__ == "__main__":
