@@ -17,8 +17,12 @@ Option 2: Provide an existing HuggingFace dataset repo (already contains models.
 
 import argparse
 import json
+import logging
 import os
+
 import bittensor as bt
+
+logger = logging.getLogger(__name__)
 from ..template.constants import NETWORKS
 from ..template.model_store import (
     validate_models_json,
@@ -29,7 +33,7 @@ from ..template.model_store import (
 
 
 def main():
-    bt.logging.set_info()
+    logging.basicConfig(level=logging.INFO)
 
     parser = argparse.ArgumentParser(description="SN38 Miner — submit ChronoGPT models")
     parser.add_argument("--wallet.name", type=str, required=True, dest="wallet_name")
@@ -49,7 +53,7 @@ def main():
         # Option 1: upload models.json to HuggingFace
         hf_token = args.hf_token or os.environ.get("HF_TOKEN")
         if not hf_token:
-            bt.logging.error("--hf-token or HF_TOKEN env var required when using --models")
+            logger.error("--hf-token or HF_TOKEN env var required when using --models")
             return
 
         with open(args.models) as f:
@@ -58,21 +62,21 @@ def main():
         try:
             missing = validate_models_json(models)
         except ValueError as e:
-            bt.logging.error(f"Invalid models: {e}")
+            logger.error(f"Invalid models: {e}")
             return
 
         if missing:
-            bt.logging.warning(f"Missing years (will score 0): {missing}")
+            logger.warning(f"Missing years (will score 0): {missing}")
 
-        bt.logging.info(f"Models to submit ({len(models)} years):")
+        logger.info(f"Models to submit ({len(models)} years):")
         for year, repo in sorted(models.items()):
-            bt.logging.info(f"  {year}: {repo}")
+            logger.info(f"  {year}: {repo}")
 
         from huggingface_hub import HfApi
         hf_user = HfApi(token=hf_token).whoami()["name"]
         dataset_repo = f"{hf_user}/sn38-submission"
         upload_models_json(models, dataset_repo, token=hf_token)
-        bt.logging.info(f"Uploaded models.json to {dataset_repo}")
+        logger.info(f"Uploaded models.json to {dataset_repo}")
 
     else:
         # Option 2: use existing dataset repo
@@ -82,13 +86,13 @@ def main():
         try:
             missing = validate_models_json(models)
         except ValueError as e:
-            bt.logging.error(f"Invalid models.json in {dataset_repo}: {e}")
+            logger.error(f"Invalid models.json in {dataset_repo}: {e}")
             return
 
         if missing:
-            bt.logging.warning(f"Missing years (will score 0): {missing}")
+            logger.warning(f"Missing years (will score 0): {missing}")
 
-        bt.logging.info(f"Using existing dataset: {dataset_repo} ({len(models)} years)")
+        logger.info(f"Using existing dataset: {dataset_repo} ({len(models)} years)")
 
     # Connect to Bittensor and commit
     wallet = bt.Wallet(name=args.wallet_name, hotkey=args.wallet_hotkey)
@@ -98,12 +102,12 @@ def main():
     with bt.Subtensor(network=args.network) as subtensor:
         metagraph = subtensor.metagraph(netuid=netuid)
         if wallet.hotkey.ss58_address not in metagraph.hotkeys:
-            bt.logging.error(f"Not registered. Run: btcli subnet register --netuid {netuid}")
+            logger.error(f"Not registered. Run: btcli subnet register --netuid {netuid}")
             return
 
         uid = metagraph.hotkeys.index(wallet.hotkey.ss58_address)
         commit_metadata(subtensor=subtensor, wallet=wallet, netuid=netuid, data=dataset_repo)
-        bt.logging.info(f"UID {uid}: committed {dataset_repo} on-chain. Done.")
+        logger.info(f"UID {uid}: committed {dataset_repo} on-chain. Done.")
 
 
 if __name__ == "__main__":

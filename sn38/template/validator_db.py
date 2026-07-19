@@ -1,14 +1,16 @@
 """SQLite cache for validator evaluation results."""
 
+import logging
 import os
 import sqlite3
+
+logger = logging.getLogger(__name__)
 
 DB_PATH = os.path.join(os.environ.get("DATA_DIR", "/app/data"), "validator_cache.db")
 
 
 def get_connection():
-    import bittensor as bt
-    bt.logging.info(f"Cache DB: {DB_PATH}")
+    logger.info(f"Cache DB: {DB_PATH}")
     conn = sqlite3.connect(DB_PATH)
     conn.execute("""
         CREATE TABLE IF NOT EXISTS evaluations (
@@ -28,16 +30,16 @@ def get_connection():
         )
     """)
     conn.commit()
-    _migrate(conn, bt)
+    _migrate(conn)
     return conn
 
 
-def _migrate(conn, bt):
+def _migrate(conn):
     version = conn.execute("PRAGMA user_version").fetchone()[0]
     if version < 1:
         cols = {r[1] for r in conn.execute("PRAGMA table_info(evaluations)").fetchall()}
         if "round" not in cols:
-            bt.logging.info("Migration v1: adding round, score_unknown, score_known, synced")
+            logger.info("Migration v1: adding round, score_unknown, score_known, synced")
             conn.execute("ALTER TABLE evaluations ADD COLUMN round INTEGER DEFAULT 2")
             conn.execute("ALTER TABLE evaluations ADD COLUMN score_unknown REAL DEFAULT 0.0")
             conn.execute("ALTER TABLE evaluations ADD COLUMN score_known REAL DEFAULT 0.0")

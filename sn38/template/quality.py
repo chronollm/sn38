@@ -4,14 +4,17 @@ Each qualified miner generates answers to questions.
 An LLM judge (OpenAI) picks the winner for each pair.
 """
 
+import asyncio
+import logging
 import os
 import random
 import tempfile
-import torch
-import tiktoken
+
 import numpy as np
-import bittensor as bt
-import asyncio
+import tiktoken
+import torch
+
+logger = logging.getLogger(__name__)
 from openai import AsyncOpenAI
 from openai.types.chat import ChatCompletionSystemMessageParam, ChatCompletionUserMessageParam
 
@@ -119,9 +122,9 @@ def duel(miner_answers, uid_a, uid_b, questions):
             wins_a += 1
         elif verdict == "b":
             wins_b += 1
-        bt.logging.info(f"    Q{q_idx}: winner={verdict}")
+        logger.info(f"    Q{q_idx}: winner={verdict}")
 
-    bt.logging.info(f"  UID {uid_a} ({wins_a}) vs UID {uid_b} ({wins_b})")
+    logger.info(f"  UID {uid_a} ({wins_a}) vs UID {uid_b} ({wins_b})")
 
     if wins_a > wins_b:
         return uid_a
@@ -134,7 +137,7 @@ def _generate_for_year(uid, submissions, eval_year, questions):
     """Generate answers for a miner's model at a given year."""
     repo_str = submissions[uid].get(str(eval_year))
     if not repo_str:
-        bt.logging.warning(f"UID {uid}: no model for year {eval_year}, using empty answers")
+        logger.warning(f"UID {uid}: no model for year {eval_year}, using empty answers")
         return [""] * len(questions)
 
     repo_id, revision = parse_repo(repo_str)
@@ -147,7 +150,7 @@ def _generate_for_year(uid, submissions, eval_year, questions):
             del model
             return answers
     except Exception as e:
-        bt.logging.error(f"UID {uid}: answer generation FAILED — {type(e).__name__}")
+        logger.error(f"UID {uid}: answer generation FAILED — {type(e).__name__}")
         return [""] * len(questions)
 
 
@@ -158,7 +161,7 @@ def _run_round_robin(miner_answers, questions, metagraph, uids):
     for i in range(len(uids)):
         for j in range(i + 1, len(uids)):
             uid_a, uid_b = uids[i], uids[j]
-            bt.logging.info(f"Duel: UID {uid_a} vs UID {uid_b}")
+            logger.info(f"Duel: UID {uid_a} vs UID {uid_b}")
             winner = duel(miner_answers, uid_a, uid_b, questions)
 
             if winner == uid_a:
@@ -170,7 +173,7 @@ def _run_round_robin(miner_answers, questions, metagraph, uids):
     win_rates = np.zeros(metagraph.n)
     for uid in uids:
         win_rates[uid] = wins[uid] / total_opponents
-        bt.logging.info(f"UID {uid}: wins={wins[uid]}/{total_opponents} win_rate={win_rates[uid]:.4f}")
+        logger.info(f"UID {uid}: wins={wins[uid]}/{total_opponents} win_rate={win_rates[uid]:.4f}")
 
     return win_rates
 
@@ -184,29 +187,29 @@ def run_quality_duels(qualified, submissions, questions, metagraph, all_years):
     oldest_year = str(all_years[0])
     other_years = [str(y) for y in all_years[1:]]
     random_year = random.choice(other_years)
-    bt.logging.info(f"Quality eval years: {oldest_year} (oldest) + {random_year} (random)")
+    logger.info(f"Quality eval years: {oldest_year} (oldest) + {random_year} (random)")
 
     uids = [uid for uid, _ in qualified]
 
     # Oldest year
-    bt.logging.info(f"=== Quality round: year {oldest_year} ===")
+    logger.info(f"=== Quality round: year {oldest_year} ===")
     answers_oldest = {}
     for uid in uids:
-        bt.logging.info(f"UID {uid}: generating answers (year {oldest_year})")
+        logger.info(f"UID {uid}: generating answers (year {oldest_year})")
         answers_oldest[uid] = _generate_for_year(uid, submissions, oldest_year, questions)
     win_rates_oldest = _run_round_robin(answers_oldest, questions, metagraph, uids)
 
     # Random year
-    bt.logging.info(f"=== Quality round: year {random_year} ===")
+    logger.info(f"=== Quality round: year {random_year} ===")
     answers_random = {}
     for uid in uids:
-        bt.logging.info(f"UID {uid}: generating answers (year {random_year})")
+        logger.info(f"UID {uid}: generating answers (year {random_year})")
         answers_random[uid] = _generate_for_year(uid, submissions, random_year, questions)
     win_rates_random = _run_round_robin(answers_random, questions, metagraph, uids)
 
     # Average both years
     win_rates = (win_rates_oldest + win_rates_random) / 2
     for uid in uids:
-        bt.logging.info(f"UID {uid}: avg_win_rate={win_rates[uid]:.4f} (oldest={win_rates_oldest[uid]:.4f} random={win_rates_random[uid]:.4f})")
+        logger.info(f"UID {uid}: avg_win_rate={win_rates[uid]:.4f} (oldest={win_rates_oldest[uid]:.4f} random={win_rates_random[uid]:.4f})")
 
     return win_rates
