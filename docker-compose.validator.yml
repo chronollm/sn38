@@ -1,8 +1,8 @@
 version: '3.8'
 services:
   validator:
-    image: chronollm/sn38-validator@sha256:3f8192b14d8860aa85db6d5e7a1cb9836b6794b67e48e6656490c6f3eee341fc
-    restart: "no"
+    image: chronollm/sn38-validator@sha256:92ad352e2eea1be38702612dac257de3a72b41bdffef7c0d6932cf89d537ce1d
+    restart: "on-failure"
     volumes:
       - /var/run/dstack.sock:/var/run/dstack.sock
       - validator-data:/app/data
@@ -14,14 +14,14 @@ services:
       - HOTKEY_FILE_CONTENT=${HOTKEY_FILE_CONTENT}
       - OPENAI_API_KEY=${OPENAI_API_KEY}
       - HF_TOKEN=${HF_TOKEN}
-      - HF_DEBUG=${HF_DEBUG:-1}
-#    deploy:
-#      resources:
-#        reservations:
-#          devices:
-#            - driver: nvidia
-#              count: 1
-#              capabilities: [gpu]
+      - HF_DEBUG=${HF_DEBUG:-0}
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu]
 
 volumes:
   validator-data:

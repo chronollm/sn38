@@ -186,8 +186,15 @@ def count_model_params(model):
 
 
 def get_device():
+    logger.info(f"torch.cuda.is_available()={torch.cuda.is_available()}")
+    logger.info(f"torch.version.cuda={torch.version.cuda}")
+    logger.info(f"torch.backends.cudnn.enabled={torch.backends.cudnn.enabled}")
+    if hasattr(torch.cuda, "device_count"):
+        logger.info(f"torch.cuda.device_count()={torch.cuda.device_count()}")
     if torch.cuda.is_available():
+        logger.info(f"GPU: {torch.cuda.get_device_name(0)}")
         return torch.device("cuda")
     if torch.backends.mps.is_available():
         return torch.device("mps")
+    logger.warning("No GPU detected, falling back to CPU")
     return torch.device("cpu")
