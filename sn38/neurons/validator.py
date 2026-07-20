@@ -292,7 +292,10 @@ def run_stage2_and_score(api, leak_scores, submissions, submission_times, config
 
 
 def run(args):
-    logging.basicConfig(level=logging.INFO)
+    logging.basicConfig(
+        level=logging.INFO,
+        format="%(levelname)-8s | %(message)s",
+    )
 
     api = BackendAPI(BACKEND_URL)
 

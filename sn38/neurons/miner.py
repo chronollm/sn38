@@ -33,7 +33,10 @@ from ..template.model_store import (
 
 
 def main():
-    logging.basicConfig(level=logging.INFO)
+    logging.basicConfig(
+        level=logging.INFO,
+        format="%(levelname)-8s | %(message)s",
+    )
 
     parser = argparse.ArgumentParser(description="SN38 Miner — submit ChronoGPT models")
     parser.add_argument("--wallet.name", type=str, required=True, dest="wallet_name")
