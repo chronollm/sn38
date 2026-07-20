@@ -1,8 +1,11 @@
 """Stage 1: Chronological consistency validation."""
 
+import logging
+
 import torch
 import tiktoken
-import bittensor as bt
+
+logger = logging.getLogger(__name__)
 
 tokenizer = tiktoken.get_encoding("gpt2")
 PAD_TOKEN = tokenizer.encode("<|endoftext|>", allowed_special={"<|endoftext|>"})[0]
@@ -59,6 +62,10 @@ def _score_batch(model, device, items):
             lengths = [len(s) for s in seqs]
 
             input_ids = torch.tensor(padded, dtype=torch.long, device=device)
+            # No logit normalization here: logits/logits.std() amplifies flat
+            # distributions (e.g. label-smoothed models), giving them an unfair
+            # advantage. The tanh clamp in ChronoGPT (15*tanh(logits/15)) already
+            # limits lm_head scaling exploits, and the cosine gate blocks copies.
             logits = model(input_ids)
 
             for batch_idx, item_idx in enumerate(active):
@@ -86,6 +93,6 @@ def evaluate(model, device, benchmark):
     failed = sum(1 for s in scores if s > epsilon)
     ratio = failed / len(scores)
 
-    bt.logging.debug(f"    median={median:.4f} failed={failed}/{len(scores)} ({ratio:.1%}) threshold={threshold:.0%}")
+    logger.debug(f"    median={median:.4f} failed={failed}/{len(scores)} ({ratio:.1%}) threshold={threshold:.0%}")
 
     return ratio > threshold, median

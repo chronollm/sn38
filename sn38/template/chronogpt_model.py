@@ -14,6 +14,8 @@ Source: https://huggingface.co/manelalab/chrono-gpt-v1-20131231/blob/safetensors
 
 import json
 import math
+import os
+
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
@@ -193,18 +195,12 @@ def load_model(model_path: str, device: torch.device) -> ChronoGPT:
         model_dim=config["model_dim"],
     )
 
-    # Prefer safetensors over pytorch_model.bin
     safetensors_path = f"{model_path}/model.safetensors"
-    bin_path = f"{model_path}/pytorch_model.bin"
+    if not os.path.exists(safetensors_path):
+        raise FileNotFoundError(f"model.safetensors not found in {model_path}")
 
-    import os
-    if os.path.exists(safetensors_path):
-        from safetensors.torch import load_file
-        state_dict = load_file(safetensors_path)
-    elif os.path.exists(bin_path):
-        state_dict = torch.load(bin_path, map_location="cpu", weights_only=True)
-    else:
-        raise FileNotFoundError(f"No weights found in {model_path}")
+    from safetensors.torch import load_file
+    state_dict = load_file(safetensors_path)
 
     model.load_state_dict(state_dict)
     return model.to(device).half()

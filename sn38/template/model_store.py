@@ -8,8 +8,9 @@ import re
 import time
 from typing import Optional
 
-import bittensor as bt
 import torch
+
+logger = logging.getLogger(__name__)
 from huggingface_hub import HfApi, hf_hub_download, snapshot_download
 
 from .constants import ALL_YEARS
@@ -51,7 +52,7 @@ def upload_models_json(models: dict, dataset_repo: str, token: Optional[str] = N
         repo_id=dataset_repo,
         repo_type="dataset",
     )
-    bt.logging.info(f"Uploaded models.json to {dataset_repo}")
+    logger.info(f"Uploaded models.json to {dataset_repo}")
 
 
 def fetch_models_json(dataset_repo: str) -> dict:
@@ -64,7 +65,7 @@ def fetch_models_json(dataset_repo: str) -> dict:
 def commit_metadata(subtensor, wallet, netuid: int, data: str):
     """Commit model metadata on-chain."""
     subtensor.set_commitment(wallet=wallet, netuid=netuid, data=data)
-    bt.logging.info(f"Committed on-chain: {data[:80]}...")
+    logger.info(f"Committed on-chain: {data[:80]}...")
 
 
 EXIT_OK = 0
@@ -98,7 +99,6 @@ def _do_download_model(
         traceback.print_exc()
         os._exit(EXIT_ERROR)
 
-    # bt.logging is holding a thread hostage which raises an exception on exit...
     os._exit(EXIT_OK)
 
 
@@ -141,7 +141,7 @@ def download_model(
                 last_progress_time = time.time()
 
             elif time.time() - last_progress_time > stall_timeout:
-                bt.logging.info(f"Stalled ({size} bytes, no growth for {stall_timeout}s), killing and retrying...")
+                logger.info(f"Stalled ({size} bytes, no growth for {stall_timeout}s), killing and retrying...")
                 process.kill()
                 process.join()
                 break
@@ -160,7 +160,7 @@ def download_model(
             elif exit_code == EXIT_BAD_REVISION:
                 raise ValueError(f"Revision {revision!r} not found for {repo_id}")
 
-            bt.logging.warning(f"Download process exited with code {exit_code}, retrying...")
+            logger.warning(f"Download process exited with code {exit_code}, retrying...")
 
     raise RuntimeError(f"Download of {repo_id} failed after {max_retries} attempts")
 
@@ -186,8 +186,15 @@ def count_model_params(model):
 
 
 def get_device():
+    logger.info(f"torch.cuda.is_available()={torch.cuda.is_available()}")
+    logger.info(f"torch.version.cuda={torch.version.cuda}")
+    logger.info(f"torch.backends.cudnn.enabled={torch.backends.cudnn.enabled}")
+    if hasattr(torch.cuda, "device_count"):
+        logger.info(f"torch.cuda.device_count()={torch.cuda.device_count()}")
     if torch.cuda.is_available():
+        logger.info(f"GPU: {torch.cuda.get_device_name(0)}")
         return torch.device("cuda")
     if torch.backends.mps.is_available():
         return torch.device("mps")
+    logger.warning("No GPU detected, falling back to CPU")
     return torch.device("cpu")

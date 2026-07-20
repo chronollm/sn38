@@ -1,15 +1,18 @@
 """Backend API client for the validator."""
 
-import bittensor as bt
+import logging
+
 from .tee import ValidatorSession
+
+logger = logging.getLogger(__name__)
 
 
 class BackendAPI:
     def __init__(self, backend_url: str):
         self.session = ValidatorSession(backend_url)
-        bt.logging.info(f"Backend URL: {backend_url}")
-        bt.logging.info(f"TEE status: {self.session.is_tee}")
-        bt.logging.info(f"TLS verify: {self.session.session.verify}")
+        logger.info(f"Backend URL: {backend_url}")
+        logger.info(f"TEE status: {self.session.is_tee}")
+        logger.info(f"TLS verify: {self.session.session.verify}")
 
     def get_config(self):
         return self.session.get("/config").json()
@@ -29,7 +32,7 @@ class BackendAPI:
     def get_submissions(self, round_num):
         resp = self.session.get(f"/submissions/{round_num}")
         if resp.status_code != 200:
-            bt.logging.error(f"Backend /submissions/{round_num} returned {resp.status_code}")
+            logger.error(f"Backend /submissions/{round_num} returned {resp.status_code}")
             return {}, {}
         data = resp.json()
         models = {int(uid): sub["models"] for uid, sub in data.get("submissions", {}).items()}
@@ -52,9 +55,9 @@ class BackendAPI:
             "results": results,
         })
         if resp.status_code != 200:
-            bt.logging.error(f"Failed to submit eval results: {resp.status_code}")
+            logger.error(f"Failed to submit eval results: {resp.status_code}")
         else:
-            bt.logging.info(f"Eval results submitted for round {round_num}")
+            logger.info(f"Eval results submitted for round {round_num}")
 
     def submit_eval_detail(self, round_num, uid, year, repo_id, passed, score, score_unknown, score_known):
         resp = self.session.post("/eval/detail", json_data={
@@ -72,6 +75,6 @@ class BackendAPI:
     def get_quality_questions(self):
         resp = self.session.get("/quality/questions")
         if resp.status_code != 200:
-            bt.logging.error(f"Backend /quality/questions returned {resp.status_code}")
+            logger.error(f"Backend /quality/questions returned {resp.status_code}")
             return []
         return resp.json().get("questions", [])

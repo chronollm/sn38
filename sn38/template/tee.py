@@ -9,11 +9,13 @@ headers needed, TLS handles replay protection natively.
 Retries indefinitely on backend downtime.
 """
 
+import logging
 import os
 import tempfile
 
-import bittensor as bt
 import requests
+
+logger = logging.getLogger(__name__)
 from requests.adapters import HTTPAdapter
 from urllib3.util.retry import Retry
 
@@ -26,7 +28,7 @@ class ValidatorSession:
         self._key_path = None
 
         if os.environ.get("SKIP_TEE", "").lower() in ("1", "true"):
-            bt.logging.warning("SKIP_TEE enabled — running without TEE authentication")
+            logger.warning("SKIP_TEE enabled — running without TEE authentication")
         else:
             self._init_tee(hotkey)
 
@@ -66,7 +68,7 @@ class ValidatorSession:
             key_file.close()
             self._key_path = key_file.name
         except Exception as e:
-            bt.logging.error(f"[TEE] get_tls_key failed: {type(e).__name__}: {e}")
+            logger.error(f"[TEE] get_tls_key failed: {type(e).__name__}: {e}")
 
     @property
     def is_tee(self) -> bool:
@@ -75,8 +77,8 @@ class ValidatorSession:
     def _check_forbidden(self, resp: requests.Response):
         if resp.status_code == 403:
             detail = resp.json().get("detail", "Unknown reason")
-            bt.logging.error(f"Backend rejected this validator (403): {detail}")
-            bt.logging.error("Your TEE image is not authorized. Update your validator or contact the subnet owner.")
+            logger.error(f"Backend rejected this validator (403): {detail}")
+            logger.error("Your TEE image is not authorized. Update your validator or contact the subnet owner.")
             raise SystemExit(1)
 
     def get(self, path: str, **kwargs) -> requests.Response:
