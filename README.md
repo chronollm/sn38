@@ -47,6 +47,8 @@ Each model is tested against a private evaluation dataset to verify it doesn't c
 
 Each year produces a score. Missing years, oversized models, or errors receive the worst possible score. The top 10 miners qualify for Stage 2.
 
+Downloading, loading, and evaluating miners' models is parallelized across and within miners — see [docs/validator.md](docs/validator.md#stage-1-parallelization) for details and tuning knobs.
+
 **Stage 2 — Quality evaluation (top 10)**
 
 Qualified miners' models answer open-ended questions. An LLM judge compares every pair of miners in a round-robin tournament. The win rate becomes the quality score.

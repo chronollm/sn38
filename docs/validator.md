@@ -93,3 +93,26 @@ You can also monitor the validator from the Phala Cloud dashboard using the URL 
 ## Frequency
 
 Rounds start every **Monday at 12:00 UTC**. Validators have **1 week** after the round starts to complete evaluation and set weights. The validator exits automatically after setting weights — no need to run it 24/7.
+
+## Stage 1 parallelization
+
+Stage 1 (leak detection) overlaps three things that used to run one miner at a time:
+
+- the next miner's models download in the background while the current miner is validated/evaluated
+- within a miner, models load into VRAM-sized batches and evaluate concurrently on separate CUDA streams
+- duplicate-weight and SHA checks for a miner's repos run in parallel (CPU-only)
+
+Loading rechecks live free VRAM before every model (not a running estimate — with same-sized models that drifts and can overcommit real memory) and reserves disk space the same way across every in-flight download, waiting if either is briefly unavailable rather than failing outright.
+
+### Tuning env vars
+
+| Variable | Default | Purpose |
+|---|---|---|
+| `TMP_DIR` | system temp dir | Where downloaded models land before eval. Point this at a disk with real headroom if `/tmp` is small or shared. |
+| `MAX_CONCURRENT_EVALS` | `4` | Cap on models evaluated at the same instant within a batch. Loading only accounts for weight size, not the activation memory a forward pass needs — lower this if you see CUDA OOM errors during eval specifically (as opposed to during loading). |
+| `DATA_DIR` | `/app/data` | Where the SQLite result cache lives. |
+| `HF_HOME` / `HF_HUB_CACHE` | huggingface_hub default | Standard HF cache location for downloaded model blobs. |
+
+### Local dry-run
+
+`scripts/test_stage1_live.py` runs the real `run_stage1()` against real miners and real HuggingFace downloads, without needing a TEE deployment or touching subtensor/wallet/weight-setting — useful for testing changes to this pipeline before deploying. See the script's docstring for usage; it needs a local `leak_events.csv` since the real backend's `/benchmark` and `/models/check-hash` require TEE-attested mTLS that isn't available outside dstack.

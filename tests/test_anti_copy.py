@@ -32,16 +32,14 @@ def api_allowed():
     return api
 
 @pytest.fixture
-def patched_stage1(monkeypatch, tmp_path):
-    """Patch all heavy dependencies for run_stage1. Returns tmp_path for model dirs."""
-    for uid in [1, 2]:
-        d = tmp_path / str(uid)
-        d.mkdir(exist_ok=True)
-        (d / "model.safetensors").write_bytes(f"weights_{uid}".encode())
-
+def patched_stage1(monkeypatch):
+    """Patch all heavy dependencies for run_stage1."""
     def fake_download(repo_id, local_dir, revision=None):
+        # Downloads land in a per-repo throwaway tmpdir (parallel prefetch), so
+        # write straight into it instead of redirecting to a fixture directory.
         uid = int(repo_id.split("-")[1])
-        return str(tmp_path / str(uid))
+        with open(os.path.join(local_dir, "model.safetensors"), "wb") as f:
+            f.write(f"weights_{uid}".encode())
 
     eval_calls = iter([(False, -8.0), (True, -3.0)] * 100)
 
@@ -54,6 +52,7 @@ def patched_stage1(monkeypatch, tmp_path):
     monkeypatch.setattr("sn38.neurons.validator.get_cached_result", lambda c, u, y, r: None)
     monkeypatch.setattr("sn38.neurons.validator.save_result", lambda *a: None)
     monkeypatch.setattr("sn38.neurons.validator.verify_commit_sha", lambda r, v: True)
+    monkeypatch.setattr("sn38.neurons.validator.get_unsynced_eval_details", lambda conn: [])
 
 
 # ─── SHA validation ───
@@ -108,8 +107,10 @@ def test_stage1_evaluates_oldest_first(patched_stage1, monkeypatch):
     }
     submission_times = {1: "2026-07-01T12:00:00", 2: "2026-07-01T08:00:00"}
     config = {"max_model_bytes": 10**10, "max_parameters": 10**10, "max_eval_seconds": 999}
+    benchmarks = {2013: {"unknown": {}, "known": {}}}
 
-    run_stage1(MagicMock(), submissions, submission_times, config, [2013], conn=MagicMock())
+    run_stage1(MagicMock(), submissions, submission_times, config, [2013], conn=MagicMock(),
+               benchmarks=benchmarks, eval_round=1)
 
     assert eval_order == [2, 1]
 
@@ -130,8 +131,10 @@ def test_stage1_duplicate_gets_worst_score(patched_stage1, monkeypatch):
     }
     submission_times = {1: "2026-07-01T08:00:00", 2: "2026-07-01T10:00:00"}
     config = {"max_model_bytes": 10**10, "max_parameters": 10**10, "max_eval_seconds": 999}
+    benchmarks = {2013: {"unknown": {}, "known": {}}}
 
-    scores = run_stage1(MagicMock(), submissions, submission_times, config, [2013], conn=MagicMock())
+    scores = run_stage1(MagicMock(), submissions, submission_times, config, [2013], conn=MagicMock(),
+                         benchmarks=benchmarks, eval_round=1)
 
     assert scores[1] < 0
     assert scores[2] == 0.0
