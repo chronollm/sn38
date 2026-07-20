@@ -46,6 +46,17 @@ def _migrate(conn):
             conn.execute("ALTER TABLE evaluations ADD COLUMN synced INTEGER DEFAULT 0")
         conn.execute("PRAGMA user_version = 1")
         conn.commit()
+    if version < 2:
+        reeval_uids = [49, 50, 51, 52, 53, 54, 55, 56, 57, 58, 59, 60, 61, 62, 63, 64, 65, 170, 172, 173, 174, 175, 209, 210, 225]
+        placeholders = ",".join("?" * len(reeval_uids))
+        cur = conn.execute(f"DELETE FROM evaluations WHERE uid IN ({placeholders}) AND round = 3", reeval_uids)
+        logger.info(
+            f"Migration v2: cleared {cur.rowcount} round 3 cached evaluations for {len(reeval_uids)} UIDs. "
+            f"These miners updated their submissions but the backend missed the update due to a bittensor v11 "
+            f"incompatibility during the round 3 snapshot. Their models will be re-evaluated with the correct repos."
+        )
+        conn.execute("PRAGMA user_version = 2")
+        conn.commit()
 
 
 def get_cached_result(conn, uid: int, year: int, repo_id: str):
