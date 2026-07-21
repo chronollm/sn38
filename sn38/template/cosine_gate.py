@@ -15,7 +15,7 @@ logger = logging.getLogger(__name__)
 
 from .model_store import download_model, parse_repo
 
-COSINE_THRESHOLD = 0.90
+COSINE_THRESHOLD = 0.999
 
 BASELINES = {
     2013: "manelalab/chrono-gpt-v1-20131231@6f2e595689458b1809d5c6efb9a6095257347ca2",
