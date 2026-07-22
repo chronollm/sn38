@@ -15,7 +15,6 @@ from huggingface_hub import HfApi, hf_hub_download, snapshot_download
 
 from .constants import ALL_YEARS
 
-
 if os.environ.get("HF_DEBUG", "").lower() in ("1", "true"):
     logging.getLogger("huggingface_hub").setLevel(logging.DEBUG)
 
@@ -79,7 +78,11 @@ def _do_download_model(
     repo_id: str,
     revision: Optional[str],
     local_dir: str,
+    disable_xet: bool = False,
 ):
+    if disable_xet:
+        os.environ["HF_HUB_DISABLE_XET"] = "1"
+
     from huggingface_hub.errors import GatedRepoError, HfHubHTTPError, RepositoryNotFoundError, RevisionNotFoundError
     try:
         snapshot_download(repo_id=repo_id, revision=revision, local_dir=local_dir)
@@ -114,6 +117,27 @@ def _dir_size(path):
     return total
 
 
+def _wipe_partial_state(local_dir: str):
+    """Remove resumable partial-download state so the next attempt starts fresh."""
+    import shutil
+    partial = os.path.join(local_dir, ".cache")
+    if os.path.isdir(partial):
+        shutil.rmtree(partial, ignore_errors=True)
+        logger.info(f"Wiped partial download state in {partial}")
+
+
+def _wipe_xet_cache():
+    """Remove the global xet chunk cache."""
+    import shutil
+    xet_cache = os.environ.get(
+        "HF_XET_CACHE",
+        os.path.join(os.path.expanduser("~"), ".cache", "huggingface", "xet"),
+    )
+    if os.path.isdir(xet_cache):
+        shutil.rmtree(xet_cache, ignore_errors=True)
+        logger.info(f"Wiped xet chunk cache at {xet_cache}")
+
+
 def download_model(
     repo_id: str,
     local_dir: str,
@@ -122,9 +146,20 @@ def download_model(
     max_retries: int = 5,
     watchdog_interval: int = 5,
 ) -> str:
-    for _ in range(max_retries):
+    for attempt in range(max_retries):
+        disable_xet = False
+
+        if attempt == 1:
+            _wipe_partial_state(local_dir)
+        if attempt == 2:
+            _wipe_partial_state(local_dir)
+            _wipe_xet_cache()
+        if attempt >= 3:
+            disable_xet = True
+            logger.info(f"Attempt {attempt}: falling back to non-xet download for {repo_id}")
+
         ctx = mp.get_context("spawn")
-        process = ctx.Process(target=_do_download_model, args=(repo_id, revision, local_dir))
+        process = ctx.Process(target=_do_download_model, args=(repo_id, revision, local_dir, disable_xet))
         process.start()
 
         last_size = -1
@@ -141,9 +176,12 @@ def download_model(
                 last_progress_time = time.time()
 
             elif time.time() - last_progress_time > stall_timeout:
-                logger.info(f"Stalled ({size} bytes, no growth for {stall_timeout}s), killing and retrying...")
-                process.kill()
-                process.join()
+                logger.info(f"Stalled ({size} bytes, no growth for {stall_timeout}s), terminating...")
+                process.terminate()
+                process.join(timeout=10)
+                if process.is_alive():
+                    process.kill()
+                    process.join()
                 break
 
         else:
@@ -160,7 +198,7 @@ def download_model(
             elif exit_code == EXIT_BAD_REVISION:
                 raise ValueError(f"Revision {revision!r} not found for {repo_id}")
 
-            logger.warning(f"Download process exited with code {exit_code}, retrying...")
+            logger.warning(f"Download process exited with code {exit_code}, retrying (attempt {attempt + 1}/{max_retries})...")
 
     raise RuntimeError(f"Download of {repo_id} failed after {max_retries} attempts")
 
