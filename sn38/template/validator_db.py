@@ -57,6 +57,25 @@ def _migrate(conn):
         )
         conn.execute("PRAGMA user_version = 2")
         conn.commit()
+    if version < 3:
+        reeval = [
+            (212, 2016), (212, 2021),
+            (118, 2017), (172, 2024),
+            (59, 2018), (59, 2023),
+            (175, 2022), (61, 2015),
+            (52, 2023), (215, 2023),
+            (180, 2022),
+        ]
+        total = 0
+        for uid, year in reeval:
+            cur = conn.execute("DELETE FROM evaluations WHERE uid = ? AND year = ? AND round = 3", (uid, year))
+            total += cur.rowcount
+        logger.info(
+            f"Migration v3: cleared {total} cached evaluations for {len(reeval)} (uid, year) pairs that failed "
+            f"with JSONDecodeError. These will be re-evaluated on next run."
+        )
+        conn.execute("PRAGMA user_version = 3")
+        conn.commit()
 
 
 def get_cached_result(conn, uid: int, year: int, repo_id: str):

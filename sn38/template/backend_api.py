@@ -26,7 +26,12 @@ class BackendAPI:
     def get_benchmark(self, cutoff_year, known=False):
         resp = self.session.get(f"/benchmark/{cutoff_year}", params={"known": known})
         if resp.status_code != 200:
-            raise RuntimeError(f"Backend /benchmark/{cutoff_year}?known={known} returned {resp.status_code}")
+            logger.warning(f"Backend /benchmark/{cutoff_year}?known={known} returned {resp.status_code}, closing connection and retrying...")
+            resp.close()
+            self.session.session.close()
+            resp = self.session.get(f"/benchmark/{cutoff_year}", params={"known": known})
+            if resp.status_code != 200:
+                raise RuntimeError(f"Backend /benchmark/{cutoff_year}?known={known} returned {resp.status_code}")
         return resp.json()
 
     def get_submissions(self, round_num):
