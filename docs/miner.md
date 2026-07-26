@@ -10,20 +10,31 @@ You train one model per year (2013-2024 included), upload them to HuggingFace, a
 
 - Bittensor wallet registered on SN38
 - HuggingFace account with a write token
-- GPU for training (the models use the ChronoGPT architecture)
+- GPU for training
 
 ## Step 1: Train your models
 
-Each model must use the **ChronoGPT architecture** and be trained only on data available up to its cutoff year. A 2018 model must not contain any knowledge from 2019 or later.
+Models can use **any architecture loadable by HuggingFace `AutoModelForCausalLM`** (Llama, Qwen, Gemma, Mistral, etc.) or the native **ChronoGPT architecture**. Each model must be trained only on data available up to its cutoff year. A 2018 model must not contain any knowledge from 2019 or later.
 
 Each HuggingFace repo must contain:
 
 ```
-config.json           # {"vocab_size": 50304, "num_layers": 52, "num_heads": 12, "model_dim": 1536}
+config.json           # standard HuggingFace config
 model.safetensors     # weights in safetensors format
+tokenizer files       # tokenizer.json, tokenizer_config.json, etc.
 ```
 
-The validator loads models using its own trusted copy of the architecture. No code from your repo is executed.
+The validator loads models with `trust_remote_code=False` — no code from your repo is executed.
+
+### Test your architecture
+
+Before submitting, verify your model is compatible with the evaluation pipeline:
+
+```bash
+python3 debug/test_automodel.py your-username/your-model
+```
+
+This runs both leak scoring and generation using the same code as the validator. If it works here, it will work on the subnet.
 
 ## Step 2: Create your models.json
 

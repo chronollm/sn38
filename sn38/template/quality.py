@@ -11,33 +11,19 @@ import random
 import tempfile
 
 import numpy as np
-import tiktoken
 import torch
 
 logger = logging.getLogger(__name__)
 from openai import AsyncOpenAI
 from openai.types.chat import ChatCompletionSystemMessageParam, ChatCompletionUserMessageParam
 
-from .model_loader import load_model, encode as _encode
+from .model_loader import load_model
 from .model_store import download_model, parse_repo, get_device
 
-_default_tokenizer = tiktoken.get_encoding("gpt2")
 
-
-def generate_answer(model, device, question, max_new_tokens=50, tokenizer=None):
-    """Generate an answer from the model using greedy decoding."""
-    tokenizer = tokenizer or _default_tokenizer
-    eos_ids = model.eos_token_ids
-    tokens = torch.tensor(_encode(tokenizer, question), dtype=torch.long).unsqueeze(0).to(device)
-    xgen = tokens.clone()
-    with torch.no_grad():
-        for _ in range(max_new_tokens):
-            logits = model(xgen)[:, -1, :]
-            next_token = torch.argmax(logits, dim=-1, keepdim=True)
-            if next_token.item() in eos_ids:
-                break
-            xgen = torch.cat([xgen, next_token], dim=1)
-    return tokenizer.decode(xgen[0][tokens.shape[1]:].tolist())
+def generate_answer(model, device, question, max_new_tokens=50):
+    """Generate an answer using the model's built-in generate method."""
+    return model.generate(question, max_new_tokens=max_new_tokens)
 
 
 JUDGE_SYSTEM_PROMPT = """You are a judge evaluating two AI-generated answers to a question.
@@ -145,9 +131,9 @@ def _generate_for_year(uid, submissions, eval_year, questions):
     try:
         with tempfile.TemporaryDirectory() as tmpdir:
             path = download_model(repo_id, tmpdir, revision=revision)
-            model, tok = load_model(path, get_device())
+            model, _ = load_model(path, get_device())
             prompts = [q["prompt"] for q in questions]
-            answers = [generate_answer(model, get_device(), p, tokenizer=tok) for p in prompts]
+            answers = [generate_answer(model, get_device(), p) for p in prompts]
             del model
             return answers
     except Exception as e:

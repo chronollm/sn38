@@ -177,8 +177,8 @@ def run_stage1(api, submissions, submission_times, config, all_years, conn, benc
 
                         bench = benchmarks[year]
                         logger.info(f"UID {uid}: evaluating year {year}...")
-                        failed_leak, median_unknown = evaluate(model, device, bench["unknown"], tokenizer)
-                        passed_known, median_known = evaluate(model, device, bench["known"], tokenizer)
+                        failed_leak, median_unknown = evaluate(model, device, bench["unknown"])
+                        passed_known, median_known = evaluate(model, device, bench["known"])
                         passed = not failed_leak and passed_known
 
                         if not passed:
