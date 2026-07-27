@@ -90,8 +90,10 @@ def _load_state(path, device):
     ).items()}
 
 
-def load_baselines(all_years, device, cache_dir="/tmp/sn38_baselines"):
+def load_baselines(all_years, device, cache_dir=None):
     """Load all baseline SVD spectra. Call once at stage 1 start."""
+    if cache_dir is None:
+        cache_dir = os.path.join(os.environ.get("HF_HOME", "/tmp"), "sn38_baselines")
     os.makedirs(cache_dir, exist_ok=True)
     total = 0
     for year in all_years:
