@@ -121,7 +121,8 @@ def load_model(model_path: str, device: torch.device) -> tuple:
     with open(f"{model_path}/config.json") as f:
         config = json.load(f)
 
-    if config.get("model_type", "").lower() == "chronogpt":
+    # TODO: remove "model_dim" fallback after round 5 — miners must set model_type
+    if config.get("model_type", "").lower() == "chronogpt" or "model_dim" in config:
         import tiktoken
         from .chronogpt_model import load_model as load_chronogpt
         raw_model = load_chronogpt(model_path, device)

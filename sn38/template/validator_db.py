@@ -76,6 +76,16 @@ def _migrate(conn):
         )
         conn.execute("PRAGMA user_version = 3")
         conn.commit()
+    if version < 4:
+        reeval_uids = [3, 27, 102, 103, 104, 105, 107, 108, 109, 111, 114, 168, 194, 199, 228, 229, 230]
+        placeholders = ",".join("?" * len(reeval_uids))
+        cur = conn.execute(f"DELETE FROM evaluations WHERE uid IN ({placeholders}) AND round = 4", reeval_uids)
+        logger.info(
+            f"Migration v4: cleared {cur.rowcount} round 4 cached evaluations for {len(reeval_uids)} UIDs "
+            f"that failed with ValueError due to missing model_type in config.json."
+        )
+        conn.execute("PRAGMA user_version = 4")
+        conn.commit()
 
 
 def get_cached_result(conn, uid: int, year: int, repo_id: str, eval_round: int):
