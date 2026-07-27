@@ -39,7 +39,7 @@ class ValidatorSession:
             total=None,
             backoff_factor=5,
             backoff_max=300,
-            status_forcelist=[502, 503, 504],
+            status_forcelist=[400, 500, 502, 503, 504],
         )
         self.session.mount("http://", HTTPAdapter(max_retries=retry))
         self.session.mount("https://", HTTPAdapter(max_retries=retry))

@@ -52,6 +52,9 @@ class BackendAPI:
         })
         if resp.status_code == 401:
             raise RuntimeError("Backend rejected request (401 Unauthorized). Check TEE authentication.")
+        if resp.status_code != 200:
+            logger.error(f"check_hash returned {resp.status_code}: {resp.text[:200]}")
+            return {"allowed": True}
         return resp.json()
 
     def submit_eval_results(self, round_num, results):

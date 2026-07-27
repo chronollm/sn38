@@ -242,9 +242,9 @@ def qualify(leak_scores, config):
 def run_stage2_and_score(api, leak_scores, submissions, submission_times, config, all_years, metagraph):
     """Run qualification, quality duels, and compute final scores."""
     qualified, normalized_leak = qualify(leak_scores, config)
-
+    owner_uid = config.get("owner_uid", 0)
     if not qualified:
-        results = RoundResults.no_qualified(leak_scores, config.get("owner_uid", 0))
+        results = RoundResults.no_qualified(leak_scores, owner_uid)
         return np.zeros(metagraph.n), None, None, None, results
 
     win_rates = None
@@ -258,7 +258,7 @@ def run_stage2_and_score(api, leak_scores, submissions, submission_times, config
         if not questions:
             logger.warning("No quality questions, skipping stage 2")
             final_scores = np.zeros(metagraph.n)
-            for uid, score in qualified:
+            for uid, _ in qualified:
                 final_scores[uid] = normalized_leak[uid]
         else:
             win_rates = run_quality_duels(qualified, submissions, questions, metagraph, all_years)
@@ -270,7 +270,7 @@ def run_stage2_and_score(api, leak_scores, submissions, submission_times, config
                 logger.info(f"UID {uid}: final={final_scores[uid]:.4f} (leak={normalized_leak[uid]:.4f} quality={win_rates[uid]:.4f})")
 
     ranked = sorted(
-        [(uid, final_scores[uid]) for uid, _ in qualified if final_scores[uid] > 0],
+        [(uid, final_scores[uid]) for uid, _ in qualified if final_scores[uid] > 0 and uid != owner_uid],
         key=lambda x: x[1], reverse=True,
     )
     top_n = ranked[:10]
@@ -282,7 +282,6 @@ def run_stage2_and_score(api, leak_scores, submissions, submission_times, config
         rewards /= rewards.sum()
         rewards *= emission_pct
 
-        owner_uid = config.get("owner_uid", 0)
         uids = [uid for uid, _ in top_n]
         weights = list(rewards)
 
@@ -293,9 +292,9 @@ def run_stage2_and_score(api, leak_scores, submissions, submission_times, config
         for uid, w in zip(uids, weights):
             logger.info(f"UID {uid}: weight={w:.4f}")
     else:
-        owner_uid = config.get("owner_uid", 0)
-        uids = [owner_uid]
-        weights = [1.0]
+        logger.info("No non-owner miners in top 10, keeping current weights")
+        uids = None
+        weights = None
 
     winner = top_n[0][0] if top_n else None
     results = RoundResults.with_winner(leak_scores, qualified, win_rates, final_scores, winner, uids, weights)
