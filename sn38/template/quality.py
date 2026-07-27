@@ -11,32 +11,19 @@ import random
 import tempfile
 
 import numpy as np
-import tiktoken
 import torch
 
 logger = logging.getLogger(__name__)
 from openai import AsyncOpenAI
 from openai.types.chat import ChatCompletionSystemMessageParam, ChatCompletionUserMessageParam
 
-from .chronogpt_model import load_model
+from .model_loader import load_model
 from .model_store import download_model, parse_repo, get_device
-
-tokenizer = tiktoken.get_encoding("gpt2")
-EOS_TOKEN = tokenizer.encode("<|endoftext|>", allowed_special={"<|endoftext|>"})[0]
 
 
 def generate_answer(model, device, question, max_new_tokens=50):
-    """Generate an answer from the model using greedy decoding."""
-    tokens = torch.tensor(tokenizer.encode(question), dtype=torch.long).unsqueeze(0).to(device)
-    xgen = tokens.clone()
-    with torch.no_grad():
-        for _ in range(max_new_tokens):
-            logits = model(xgen)[:, -1, :]
-            next_token = torch.argmax(logits, dim=-1, keepdim=True)
-            if next_token.item() == EOS_TOKEN:
-                break
-            xgen = torch.cat([xgen, next_token], dim=1)
-    return tokenizer.decode(xgen[0][tokens.shape[1]:].tolist())
+    """Generate an answer using the model's built-in generate method."""
+    return model.generate(question, max_new_tokens=max_new_tokens)
 
 
 JUDGE_SYSTEM_PROMPT = """You are a judge evaluating two AI-generated answers to a question.
@@ -122,8 +109,6 @@ def duel(miner_answers, uid_a, uid_b, questions):
             wins_a += 1
         elif verdict == "b":
             wins_b += 1
-        logger.info(f"    Q{q_idx}: winner={verdict}")
-
     logger.info(f"  UID {uid_a} ({wins_a}) vs UID {uid_b} ({wins_b})")
 
     if wins_a > wins_b:
@@ -144,9 +129,14 @@ def _generate_for_year(uid, submissions, eval_year, questions):
     try:
         with tempfile.TemporaryDirectory() as tmpdir:
             path = download_model(repo_id, tmpdir, revision=revision)
-            model = load_model(path, get_device())
+            model, _ = load_model(path, get_device())
             prompts = [q["prompt"] for q in questions]
-            answers = [generate_answer(model, get_device(), p) for p in prompts]
+            answers = []
+            third = max(1, len(prompts) // 3)
+            for i, p in enumerate(prompts):
+                answers.append(generate_answer(model, get_device(), p))
+                if (i + 1) % third == 0 or i + 1 == len(prompts):
+                    logger.info(f"UID {uid}: generated {i+1}/{len(prompts)}")
             del model
             return answers
     except Exception as e:
@@ -184,32 +174,24 @@ def run_quality_duels(qualified, submissions, questions, metagraph, all_years):
     Returns:
         np.array of win rates (indexed by uid, 0-1), averaged over both years.
     """
-    oldest_year = str(all_years[0])
-    other_years = [str(y) for y in all_years[1:]]
-    random_year = random.choice(other_years)
-    logger.info(f"Quality eval years: {oldest_year} (oldest) + {random_year} (random)")
-
     uids = [uid for uid, _ in qualified]
+    eval_years = [str(all_years[0])]
+    other_years = [str(y) for y in all_years[1:]]
+    if other_years:
+        eval_years.append(random.choice(other_years))
+    logger.info(f"Quality eval years: {eval_years}")
 
-    # Oldest year
-    logger.info(f"=== Quality round: year {oldest_year} ===")
-    answers_oldest = {}
-    for uid in uids:
-        logger.info(f"UID {uid}: generating answers (year {oldest_year})")
-        answers_oldest[uid] = _generate_for_year(uid, submissions, oldest_year, questions)
-    win_rates_oldest = _run_round_robin(answers_oldest, questions, metagraph, uids)
+    all_win_rates = []
+    for year in eval_years:
+        logger.info(f"=== Quality round: year {year} ===")
+        answers = {}
+        for uid in uids:
+            logger.info(f"UID {uid}: generating answers (year {year})")
+            answers[uid] = _generate_for_year(uid, submissions, year, questions)
+        all_win_rates.append(_run_round_robin(answers, questions, metagraph, uids))
 
-    # Random year
-    logger.info(f"=== Quality round: year {random_year} ===")
-    answers_random = {}
+    win_rates = sum(all_win_rates) / len(all_win_rates)
     for uid in uids:
-        logger.info(f"UID {uid}: generating answers (year {random_year})")
-        answers_random[uid] = _generate_for_year(uid, submissions, random_year, questions)
-    win_rates_random = _run_round_robin(answers_random, questions, metagraph, uids)
-
-    # Average both years
-    win_rates = (win_rates_oldest + win_rates_random) / 2
-    for uid in uids:
-        logger.info(f"UID {uid}: avg_win_rate={win_rates[uid]:.4f} (oldest={win_rates_oldest[uid]:.4f} random={win_rates_random[uid]:.4f})")
+        logger.info(f"UID {uid}: avg_win_rate={win_rates[uid]:.4f}")
 
     return win_rates

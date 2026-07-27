@@ -78,11 +78,11 @@ def _migrate(conn):
         conn.commit()
 
 
-def get_cached_result(conn, uid: int, year: int, repo_id: str):
+def get_cached_result(conn, uid: int, year: int, repo_id: str, eval_round: int):
     """Returns (passed, score) or None if not cached."""
     row = conn.execute(
-        "SELECT passed, score FROM evaluations WHERE uid=? AND year=? AND repo_id=?",
-        (uid, year, repo_id)
+        "SELECT passed, score FROM evaluations WHERE uid=? AND year=? AND repo_id=? AND round=?",
+        (uid, year, repo_id, eval_round)
     ).fetchone()
     if row is None:
         return None

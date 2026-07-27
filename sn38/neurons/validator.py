@@ -23,7 +23,7 @@ import bittensor as bt
 
 logger = logging.getLogger(__name__)
 
-from ..template.chronogpt_model import load_model
+from ..template.model_loader import load_model
 from ..template.constants import NETWORKS
 from ..template.model_store import download_model, parse_repo, get_repo_file_size, count_model_params, get_device, verify_commit_sha
 from ..template.backend_api import BackendAPI
@@ -104,7 +104,7 @@ def run_stage1(api, submissions, submission_times, config, all_years, conn, benc
             repo_id = models.get(str(year))
             if not repo_id:
                 continue
-            cached = get_cached_result(conn, uid, year, repo_id)
+            cached = get_cached_result(conn, uid, year, repo_id, eval_round)
             if cached is not None:
                 _, score = cached
                 year_scores[year] = score
@@ -146,7 +146,7 @@ def run_stage1(api, submissions, submission_times, config, all_years, conn, benc
                         continue
 
                     eval_start = time.time()
-                    model = load_model(path, device)
+                    model, tokenizer = load_model(path, device)
                     param_count = count_model_params(model)
                     logger.info(f"UID {uid}: loaded {param_count / 1e6:.0f}M params")
 
