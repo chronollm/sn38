@@ -35,7 +35,7 @@ BASELINES = {
 _baselines = {}
 
 
-def _svd_spectra(state_dict):
+def svd_spectra(state_dict):
     """Extract singular value spectra for all 2D weight matrices."""
     spectra = {}
     for name, param in state_dict.items():
@@ -61,7 +61,7 @@ def load_baselines(all_years, device, cache_dir="/tmp/sn38_baselines"):
             state = {k: v.to(device) for k, v in torch.load(
                 os.path.join(path, "pytorch_model.bin"), map_location="cpu", weights_only=True
             ).items()}
-        _baselines[year] = _svd_spectra(state)
+        _baselines[year] = svd_spectra(state)
         del state
         logger.info(f"Baseline {year} SVD loaded ({len(_baselines[year])} matrices)")
     logger.info(f"All {len(_baselines)} baselines loaded")
@@ -74,11 +74,11 @@ def unload_baselines():
         torch.cuda.empty_cache()
 
 
-def check_svd_gate(candidate_state, year):
+def check_svd_gate(candidate_spectra, year):
     """Check if a candidate model passes the SVD similarity gate.
 
     Args:
-        candidate_state: model.state_dict() from the already-loaded candidate model
+        candidate_spectra: output of svd_spectra(model.state_dict())
         year: which baseline year to compare against
 
     Returns (passed, avg_svd_dist).
@@ -86,8 +86,6 @@ def check_svd_gate(candidate_state, year):
     baseline_spectra = _baselines.get(year)
     if baseline_spectra is None:
         return True, 1.0
-
-    candidate_spectra = _svd_spectra(candidate_state)
 
     common = sorted(set(baseline_spectra.keys()) & set(candidate_spectra.keys()))
     if not common:
