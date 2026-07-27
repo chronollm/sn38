@@ -28,7 +28,7 @@ from ..template.constants import NETWORKS
 from ..template.model_store import download_model, parse_repo, get_repo_file_size, count_model_params, get_device, verify_commit_sha
 from ..template.backend_api import BackendAPI
 from ..template.validator_db import get_connection, get_cached_result, save_result, is_week_evaluated, mark_week_evaluated, cleanup_after_uid, get_unsynced_eval_details, mark_synced
-from ..template.cosine_gate import check_cosine_gate, load_baselines, unload_baselines
+from ..template.svd_gate import check_svd_gate, svd_spectra, load_baselines, unload_baselines
 from ..template.leak import evaluate
 from ..template.quality import run_quality_duels
 from ..template.round_results import RoundResults
@@ -168,21 +168,21 @@ def run_stage1(api, submissions, submission_times, config, all_years, conn, benc
                         fail_repo_years()
                         continue
 
-                    cosine_results = {}
+                    svd_results = {}
                     if uid != owner_uid:
-                        candidate_state = model.state_dict()
+                        candidate_spectra = svd_spectra(model.state_dict())
                         for year in years:
-                            gate_passed, avg_cosine = check_cosine_gate(candidate_state, year)
-                            cosine_results[year] = gate_passed
-                            logger.info(f"UID {uid}: year {year} cosine={avg_cosine:.6f} gate={'PASS' if gate_passed else 'FAIL'}")
-                        del candidate_state
+                            gate_passed, avg_svd = check_svd_gate(candidate_spectra, year)
+                            svd_results[year] = gate_passed
+                            logger.info(f"UID {uid}: year {year} svd_dist={avg_svd:.6f} gate={'PASS' if gate_passed else 'FAIL'}")
+                        del candidate_spectra
 
                     for year in years:
                         if time.time() - eval_start > config["max_eval_seconds"]:
                             logger.warning(f"UID {uid}: timeout, remaining years skipped")
                             break
 
-                        if not cosine_results.get(year, True):
+                        if not svd_results.get(year, True):
                             fail_year(year)
                             continue
 
