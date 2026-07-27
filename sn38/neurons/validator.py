@@ -57,6 +57,17 @@ def _sync_eval_details(api, conn):
     logger.info(f"Sync complete: {synced}/{len(unsynced)}")
 
 
+def _get_current_weights(subtensor, netuid, wallet, owner_uid):
+    """Read current on-chain weights for this validator."""
+    metagraph = subtensor.metagraph(netuid=netuid, lite=False)
+    my_uid = metagraph.hotkeys.index(wallet.hotkey.ss58_address)
+    current = metagraph.weights[my_uid]
+    nonzero = [(int(i), float(current[i])) for i in range(len(current)) if current[i] > 0]
+    if nonzero:
+        return [u for u, _ in nonzero], [w for _, w in nonzero]
+    return [owner_uid], [1.0]
+
+
 def _preload_benchmarks(api, all_years):
     benchmarks = {}
     for year in all_years:
@@ -233,9 +244,8 @@ def run_stage2_and_score(api, leak_scores, submissions, submission_times, config
     qualified, normalized_leak = qualify(leak_scores, config)
 
     if not qualified:
-        owner_uid = config.get("owner_uid", 0)
-        results = RoundResults.no_qualified(leak_scores, owner_uid)
-        return np.zeros(metagraph.n), None, [owner_uid], [1.0], results
+        results = RoundResults.no_qualified(leak_scores, config.get("owner_uid", 0))
+        return np.zeros(metagraph.n), None, None, None, results
 
     win_rates = None
     if len(qualified) == 1:
@@ -259,33 +269,35 @@ def run_stage2_and_score(api, leak_scores, submissions, submission_times, config
                 final_scores[uid] = leak_weight * normalized_leak[uid] + quality_weight * win_rates[uid]
                 logger.info(f"UID {uid}: final={final_scores[uid]:.4f} (leak={normalized_leak[uid]:.4f} quality={win_rates[uid]:.4f})")
 
-    winner = None
-    if final_scores.sum() > 0:
-        max_score = final_scores.max()
-        tied_uids = [uid for uid in range(metagraph.n) if final_scores[uid] == max_score]
-        if len(tied_uids) > 1:
-            winner = min(tied_uids, key=lambda u: submission_times.get(u, "9999"))
-            logger.info(f"Tie between UIDs {tied_uids}, earliest submission wins")
-        else:
-            winner = tied_uids[0]
-        logger.info(f"Winner: UID {winner} score={final_scores[winner]:.4f}")
+    ranked = sorted(
+        [(uid, final_scores[uid]) for uid, _ in qualified if final_scores[uid] > 0],
+        key=lambda x: x[1], reverse=True,
+    )
+    top_n = ranked[:10]
 
-    # Emission split: winner gets emission_pct, owner gets the rest
-    emission_pct = config.get("emission_pct", 0.30)
-    owner_uid = config.get("owner_uid", 0)
-    uids = []
-    weights = []
+    if top_n:
+        n = len(top_n)
+        emission_pct = config.get("emission_pct", 1.0)
+        rewards = np.exp(-0.8 * (np.arange(n) ** 0.9))
+        rewards /= rewards.sum()
+        rewards *= emission_pct
 
-    if winner is not None and winner != owner_uid:
-        uids.append(winner)
-        weights.append(emission_pct)
+        owner_uid = config.get("owner_uid", 0)
+        uids = [uid for uid, _ in top_n]
+        weights = list(rewards)
+
         if emission_pct < 1.0:
             uids.append(owner_uid)
             weights.append(1.0 - emission_pct)
-    else:
-        uids.append(owner_uid)
-        weights.append(1.0)
 
+        for uid, w in zip(uids, weights):
+            logger.info(f"UID {uid}: weight={w:.4f}")
+    else:
+        owner_uid = config.get("owner_uid", 0)
+        uids = [owner_uid]
+        weights = [1.0]
+
+    winner = top_n[0][0] if top_n else None
     results = RoundResults.with_winner(leak_scores, qualified, win_rates, final_scores, winner, uids, weights)
 
     return final_scores, winner, uids, weights, results
@@ -353,6 +365,10 @@ def run(args):
     )
 
     api.submit_eval_results(eval_round, results.to_dict())
+
+    if uids is None:
+        logger.info("No qualified miners, re-setting current on-chain weights")
+        uids, weights = _get_current_weights(subtensor, netuid, wallet, owner_uid)
 
     subtensor.set_weights(
         wallet=wallet, netuid=netuid,
