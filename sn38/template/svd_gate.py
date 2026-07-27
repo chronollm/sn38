@@ -1,21 +1,21 @@
-"""Cosine similarity gate — reject models too similar to the baseline.
+"""SVD similarity gate — reject models with spectra too close to the baseline.
 
-Loads all baselines into VRAM at startup. Compares candidate models
-using batched per-layer cosine similarity on GPU.
+Compares singular value spectra of weight matrices. Invariant to
+rotation and permutation attacks that bypass cosine similarity.
 """
 
 import logging
 import os
 
 import torch
-import torch.nn.functional as F
 from safetensors import safe_open
 
 logger = logging.getLogger(__name__)
 
 from .model_store import download_model, parse_repo
 
-COSINE_THRESHOLD = 0.999
+SVD_THRESHOLD = 0.15
+SVD_TOP_RATIO = 0.25
 
 BASELINES = {
     2013: "manelalab/chrono-gpt-v1-20131231@6f2e595689458b1809d5c6efb9a6095257347ca2",
@@ -35,8 +35,17 @@ BASELINES = {
 _baselines = {}
 
 
+def _svd_spectra(state_dict):
+    """Extract singular value spectra for all 2D weight matrices."""
+    spectra = {}
+    for name, param in state_dict.items():
+        if param.ndim == 2 and min(param.shape) > 1:
+            spectra[name] = torch.linalg.svdvals(param.float())
+    return spectra
+
+
 def load_baselines(all_years, device, cache_dir="/tmp/sn38_baselines"):
-    """Load all baseline state dicts into device memory. Call once at stage 1 start."""
+    """Load all baseline SVD spectra. Call once at stage 1 start."""
     os.makedirs(cache_dir, exist_ok=True)
     for year in all_years:
         repo_str = BASELINES.get(year)
@@ -52,56 +61,50 @@ def load_baselines(all_years, device, cache_dir="/tmp/sn38_baselines"):
             state = {k: v.to(device) for k, v in torch.load(
                 os.path.join(path, "pytorch_model.bin"), map_location="cpu", weights_only=True
             ).items()}
-        _baselines[year] = state
-        logger.info(f"Baseline {year} loaded to {device}")
+        _baselines[year] = _svd_spectra(state)
+        del state
+        logger.info(f"Baseline {year} SVD loaded ({len(_baselines[year])} matrices)")
     logger.info(f"All {len(_baselines)} baselines loaded")
 
 
 def unload_baselines():
-    """Free baseline state dicts from memory. Call after stage 1."""
+    """Free baseline spectra from memory."""
     _baselines.clear()
     if torch.cuda.is_available():
         torch.cuda.empty_cache()
 
 
-def check_cosine_gate(candidate_state, year):
-    """Check if a candidate model passes the cosine similarity gate.
+def check_svd_gate(candidate_state, year):
+    """Check if a candidate model passes the SVD similarity gate.
 
     Args:
         candidate_state: model.state_dict() from the already-loaded candidate model
         year: which baseline year to compare against
 
-    Returns (passed, avg_cosine).
+    Returns (passed, avg_svd_dist).
     """
-    baseline_state = _baselines.get(year)
-    if baseline_state is None:
-        return True, 0.0
+    baseline_spectra = _baselines.get(year)
+    if baseline_spectra is None:
+        return True, 1.0
 
-    common = sorted(set(baseline_state.keys()) & set(candidate_state.keys()))
+    candidate_spectra = _svd_spectra(candidate_state)
+
+    common = sorted(set(baseline_spectra.keys()) & set(candidate_spectra.keys()))
     if not common:
-        return False, 1.0
+        return True, 1.0
 
-    groups = {}
-    for k in common:
-        a = baseline_state[k]
-        b = candidate_state[k]
-        if a.shape != b.shape:
+    distances = []
+    for name in common:
+        sv_base = baseline_spectra[name]
+        sv_cand = candidate_spectra[name]
+        if sv_base.shape != sv_cand.shape:
             continue
-        size = a.numel()
-        if size not in groups:
-            groups[size] = {"base": [], "cand": []}
-        groups[size]["base"].append(a.flatten().float())
-        groups[size]["cand"].append(b.flatten().float())
+        k = max(1, int(len(sv_base) * SVD_TOP_RATIO))
+        dist = torch.norm(sv_base[:k] - sv_cand[:k]) / (torch.norm(sv_base[:k]) + 1e-10)
+        distances.append(dist.item())
 
-    sims = []
-    for size, group in groups.items():
-        base_batch = torch.stack(group["base"])
-        cand_batch = torch.stack(group["cand"])
-        batch_sims = F.cosine_similarity(base_batch, cand_batch, dim=1)
-        sims.extend(batch_sims.tolist())
+    if not distances:
+        return True, 1.0
 
-    if not sims:
-        return False, 1.0
-
-    avg = sum(sims) / len(sims)
-    return avg < COSINE_THRESHOLD, avg
+    avg_dist = sum(distances) / len(distances)
+    return avg_dist >= SVD_THRESHOLD, avg_dist

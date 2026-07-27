@@ -118,7 +118,7 @@ def duel(miner_answers, uid_a, uid_b, questions):
     return None
 
 
-def _generate_for_year(uid, submissions, eval_year, questions):
+def _generate_for_year(uid, submissions, eval_year, questions, device):
     """Generate answers for a miner's model at a given year."""
     repo_str = submissions[uid].get(str(eval_year))
     if not repo_str:
@@ -129,12 +129,12 @@ def _generate_for_year(uid, submissions, eval_year, questions):
     try:
         with tempfile.TemporaryDirectory() as tmpdir:
             path = download_model(repo_id, tmpdir, revision=revision)
-            model, _ = load_model(path, get_device())
+            model, _ = load_model(path, device)
             prompts = [q["prompt"] for q in questions]
             answers = []
             third = max(1, len(prompts) // 3)
             for i, p in enumerate(prompts):
-                answers.append(generate_answer(model, get_device(), p))
+                answers.append(generate_answer(model, device, p))
                 if (i + 1) % third == 0 or i + 1 == len(prompts):
                     logger.info(f"UID {uid}: generated {i+1}/{len(prompts)}")
             del model
@@ -175,6 +175,7 @@ def run_quality_duels(qualified, submissions, questions, metagraph, all_years):
         np.array of win rates (indexed by uid, 0-1), averaged over both years.
     """
     uids = [uid for uid, _ in qualified]
+    device = get_device()
     eval_years = [str(all_years[0])]
     other_years = [str(y) for y in all_years[1:]]
     if other_years:
@@ -187,7 +188,7 @@ def run_quality_duels(qualified, submissions, questions, metagraph, all_years):
         answers = {}
         for uid in uids:
             logger.info(f"UID {uid}: generating answers (year {year})")
-            answers[uid] = _generate_for_year(uid, submissions, year, questions)
+            answers[uid] = _generate_for_year(uid, submissions, year, questions, device)
         all_win_rates.append(_run_round_robin(answers, questions, metagraph, uids))
 
     win_rates = sum(all_win_rates) / len(all_win_rates)
