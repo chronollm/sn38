@@ -104,7 +104,7 @@ def run_stage1(api, submissions, submission_times, config, all_years, conn, benc
             repo_id = models.get(str(year))
             if not repo_id:
                 continue
-            cached = get_cached_result(conn, uid, year, repo_id)
+            cached = get_cached_result(conn, uid, year, repo_id, eval_round)
             if cached is not None:
                 _, score = cached
                 year_scores[year] = score
