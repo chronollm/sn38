@@ -48,7 +48,29 @@ class _HFWrapper(nn.Module):
         return self.tokenizer.decode(ids, skip_special_tokens=skip_special_tokens)
 
     @torch.inference_mode()
-    def generate(self, prompt, max_new_tokens=50):
+    def generate(self, prompt, max_new_tokens=50, temperature=None, top_k=None, do_sample=None, seed=None):
+        """Generate a completion for a single prompt.
+
+        prompt: input text.
+        max_new_tokens: max number of tokens to generate.
+        temperature: sampling temperature, forwarded only if set.
+        top_k: top-k sampling cutoff, forwarded only if set.
+        do_sample: force sampling on/off, forwarded only if set.
+        seed: RNG seed.
+        """
+
+        generate_kwargs = {}
+        if temperature is not None:
+            generate_kwargs["temperature"] = temperature
+        if top_k is not None:
+            generate_kwargs["top_k"] = top_k
+        if do_sample is not None:
+            generate_kwargs["do_sample"] = do_sample
+        if seed is not None:
+            # transformers' generate() takes no per-call generator/seed argument,
+            # so seeding can only be done through the global RNG.
+            torch.manual_seed(seed)
+
         if self.tokenizer.chat_template:
             inputs = self.tokenizer.apply_chat_template(
                 [
@@ -59,12 +81,11 @@ class _HFWrapper(nn.Module):
                 tokenize=True,
                 return_tensors="pt",
             )["input_ids"].to(self.hf_model.device)
-            out = self.hf_model.generate(inputs, max_new_tokens=max_new_tokens, pad_token_id=self.pad_token_id)
-            return self.tokenizer.decode(out[0, inputs.shape[1]:], skip_special_tokens=True).strip()
-        ids = self.encode(prompt, add_special_tokens=True)
-        prompt_len = len(ids)
-        out = self.hf_model.generate(torch.tensor([ids], device=self.hf_model.device), max_new_tokens=max_new_tokens, pad_token_id=self.pad_token_id)
-        return self.decode(out[0, prompt_len:].tolist(), skip_special_tokens=True).strip()
+        else:
+            inputs = torch.tensor([self.encode(prompt, add_special_tokens=True)], device=self.hf_model.device)
+
+        out = self.hf_model.generate(inputs, max_new_tokens=max_new_tokens, pad_token_id=self.pad_token_id, **generate_kwargs)
+        return self.decode(out[0, inputs.shape[1]:].tolist(), skip_special_tokens=True).strip()
 
     def parameters(self):
         return self.hf_model.parameters()
