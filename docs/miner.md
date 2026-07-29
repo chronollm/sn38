@@ -36,6 +36,33 @@ python3 debug/test_automodel.py your-username/your-model
 
 This runs both leak scoring and generation using the same code as the validator. If it works here, it will work on the subnet.
 
+### Submit a custom architecture
+
+If your model uses a custom architecture not built into HuggingFace `transformers`, you can request to have it added to the validator.
+
+Since HuggingFace requires Python class definitions to load custom architectures, and the validator enforces `trust_remote_code=False`, custom architectures must be reviewed and added to the subnet codebase.
+
+**What to submit** — open a PR adding a folder under `sn38/architectures/<your-architecture>/` with:
+
+| File | Required | Description |
+|------|----------|-------------|
+| `configuration_<name>.py` | Yes | Config class inheriting `PretrainedConfig` |
+| `modeling_<name>.py` | Yes | Model class inheriting `PreTrainedModel` |
+| `tokenization_<name>.py` | Only if custom | Tokenizer class. Not needed if you export to standard `tokenizer.json` format |
+
+**Requirements:**
+- Weights must be in `safetensors` format (no pickle)
+- Tokenizer should use `tokenizer.json` (HF standard) when possible. If you need a custom tokenizer class, the vocab data must be in a safe format (no pickle)
+- No arbitrary code execution in any file
+- The config must use a unique `model_type` in `config.json`
+
+**Process:**
+1. Open a PR with your architecture files, or send them via DM to the team
+2. We review the code for security and correctness
+3. Once added, any miner can use your architecture with `trust_remote_code=False`
+
+**Why is this needed?** HuggingFace requires Python class definitions to instantiate custom architectures. The official way is to submit a PR to the [transformers library](https://huggingface.co/docs/transformers/main/en/modular_transformers), but the review process can take weeks or months. Our architecture registry speeds this up — we review and add your architecture so you can start competing immediately.
+
 ## Step 2: Create your models.json
 
 Map each year to a HuggingFace repo **pinned to a specific commit SHA**:
