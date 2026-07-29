@@ -48,13 +48,12 @@ Since HuggingFace requires Python class definitions to load custom architectures
 |------|----------|-------------|
 | `configuration_<name>.py` | Yes | Config class inheriting `PretrainedConfig` |
 | `modeling_<name>.py` | Yes | Model class inheriting `PreTrainedModel` |
-| `tokenization_<name>.py` | Only if custom | Tokenizer class. Not needed if you export to standard `tokenizer.json` format |
 
 **Requirements:**
 - Weights must be in `safetensors` format (no pickle)
-- Tokenizer should use `tokenizer.json` (HF standard) when possible. If you need a custom tokenizer class, the vocab data must be in a safe format (no pickle)
+- Tokenizer must use `tokenizer.json` (HF standard). No custom tokenizer classes or pickle files
 - No arbitrary code execution in any file
-- The config must use a unique `model_type` in `config.json`
+- The `model_type` in `config.json` must be prefixed with `sn38-` (e.g. `sn38-mymodel`) to avoid conflicts with architectures built into HuggingFace
 
 **Process:**
 1. Open a PR with your architecture files, or send them via DM to the team

@@ -6,12 +6,15 @@ eos_token_ids, pad_token_id.
 
 Supported:
 - ChronoGPT (model_dim in config) → custom class + tiktoken GPT-2
-- Any HuggingFace model → AutoModelForCausalLM + AutoTokenizer
+- Registered architectures (sn38/architectures/) → AutoModelForCausalLM
+- Any HuggingFace built-in model → AutoModelForCausalLM + AutoTokenizer
 """
 
 import json
 import torch
 import torch.nn as nn
+
+import sn38.architectures  # noqa: F401 — registers custom architectures
 
 
 class _HFWrapper(nn.Module):
@@ -37,12 +40,12 @@ class _HFWrapper(nn.Module):
     def forward(self, input_ids):
         return self.hf_model(input_ids).logits
 
-    def encode(self, text):
-        ids = self.tokenizer.encode(text, add_special_tokens=False)
+    def encode(self, text, add_special_tokens=False):
+        ids = self.tokenizer.encode(text, add_special_tokens=add_special_tokens)
         return list(ids) if not isinstance(ids, list) else ids
 
-    def decode(self, ids):
-        return self.tokenizer.decode(ids)
+    def decode(self, ids, skip_special_tokens=False):
+        return self.tokenizer.decode(ids, skip_special_tokens=skip_special_tokens)
 
     @torch.inference_mode()
     def generate(self, prompt, max_new_tokens=50):
@@ -58,10 +61,10 @@ class _HFWrapper(nn.Module):
             )["input_ids"].to(self.hf_model.device)
             out = self.hf_model.generate(inputs, max_new_tokens=max_new_tokens, pad_token_id=self.pad_token_id)
             return self.tokenizer.decode(out[0, inputs.shape[1]:], skip_special_tokens=True).strip()
-        ids = self.encode(prompt)
+        ids = self.encode(prompt, add_special_tokens=True)
         prompt_len = len(ids)
         out = self.hf_model.generate(torch.tensor([ids], device=self.hf_model.device), max_new_tokens=max_new_tokens, pad_token_id=self.pad_token_id)
-        return self.decode(out[0, prompt_len:].tolist())
+        return self.decode(out[0, prompt_len:].tolist(), skip_special_tokens=True).strip()
 
     def parameters(self):
         return self.hf_model.parameters()
