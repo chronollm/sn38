@@ -130,7 +130,9 @@ def _compare_spectra(candidate_spectra, baseline_spectra):
         if sv_base.shape != sv_cand.shape:
             continue
         k = max(1, int(len(sv_base) * SVD_TOP_RATIO))
-        dist = torch.norm(sv_base[:k] - sv_cand[:k]) / (torch.norm(sv_base[:k]) + 1e-10)
+        sv_base_norm = sv_base[:k] / (torch.norm(sv_base[:k]) + 1e-10)
+        sv_cand_norm = sv_cand[:k] / (torch.norm(sv_cand[:k]) + 1e-10)
+        dist = torch.norm(sv_base_norm - sv_cand_norm)
         distances.append(dist.item())
 
     if not distances:
