@@ -1,0 +1,7 @@
+from transformers import AutoConfig, AutoModelForCausalLM
+
+from .configuration_chronoguard import ChronoguardConfig
+from .modeling_chronoguard import ChronoguardForCausalLM
+
+AutoConfig.register(ChronoguardConfig.model_type, ChronoguardConfig)
+AutoModelForCausalLM.register(ChronoguardConfig, ChronoguardForCausalLM)
