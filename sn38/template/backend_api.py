@@ -17,8 +17,9 @@ class BackendAPI:
     def get_config(self):
         return self.session.get("/config").json()
 
-    def get_years(self):
-        return self.session.get("/years").json()["years"]
+    def get_years(self, round_num=None):
+        params = {"round_num": round_num} if round_num is not None else {}
+        return self.session.get("/years", params=params).json()["years"]
 
     def get_eval_round(self):
         return self.session.get("/rounds/current").json()["eval_round"]

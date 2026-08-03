@@ -312,11 +312,12 @@ def run(args):
     api = BackendAPI(BACKEND_URL)
 
     config = api.get_config()
-    ALL_YEARS = api.get_years()
-    NUM_YEARS = len(ALL_YEARS)
     eval_round = api.get_eval_round()
+    ALL_YEARS = api.get_years(eval_round)
+    NUM_YEARS = len(ALL_YEARS)
     logger.info(f"Config: {config}")
     logger.info(f"Eval round: {eval_round}")
+    logger.info(f"Eval years: {ALL_YEARS}")
 
     netuid = NETWORKS[args.network]["netuid"]
     owner_uid = NETWORKS[args.network]["owner_uid"]
