@@ -160,3 +160,27 @@ def check_svd_gate(candidate_spectra, year):
         return True, 1.0
 
     return min_dist >= SVD_THRESHOLD, min_dist
+
+
+def dedup_by_svd(spectra_dict, submission_times, threshold=SVD_THRESHOLD):
+    """Remove duplicate miners by pairwise SVD comparison.
+
+    Sorts by submission time — earliest submitter wins.
+    Returns set of accepted UIDs.
+    """
+    sorted_uids = sorted(spectra_dict.keys(), key=lambda u: submission_times.get(u, "9999"))
+    accepted = []
+
+    for uid in sorted_uids:
+        is_dup = False
+        for accepted_uid in accepted:
+            dist = _compare_spectra(spectra_dict[uid], spectra_dict[accepted_uid])
+            if dist is not None and dist < threshold:
+                logger.warning(f"UID {uid} is a copy of UID {accepted_uid} (svd_dist={dist:.6f}), removing")
+                is_dup = True
+                break
+        if not is_dup:
+            accepted.append(uid)
+
+    logger.info(f"SVD dedup: {len(spectra_dict)} miners → {len(accepted)} unique")
+    return set(accepted)

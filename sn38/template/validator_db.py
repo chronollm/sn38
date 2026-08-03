@@ -29,6 +29,14 @@ def get_connection():
             completed_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
         )
     """)
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS svd_spectra (
+            uid INTEGER,
+            round INTEGER,
+            spectra BLOB,
+            PRIMARY KEY (uid, round)
+        )
+    """)
     conn.commit()
     _migrate(conn)
     return conn
@@ -86,6 +94,34 @@ def _migrate(conn):
         )
         conn.execute("PRAGMA user_version = 4")
         conn.commit()
+
+
+def save_svd_spectra(conn, uid: int, eval_round: int, spectra: dict):
+    """Save SVD spectra for pairwise dedup."""
+    import io
+    import torch
+    buf = io.BytesIO()
+    torch.save({k: v.cpu() for k, v in spectra.items()}, buf)
+    conn.execute(
+        "INSERT OR REPLACE INTO svd_spectra (uid, round, spectra) VALUES (?, ?, ?)",
+        (uid, eval_round, buf.getvalue())
+    )
+    conn.commit()
+
+
+def load_all_svd_spectra(conn, eval_round: int, device="cpu"):
+    """Load all SVD spectra for a round. Returns {uid: spectra}."""
+    rows = conn.execute(
+        "SELECT uid, spectra FROM svd_spectra WHERE round=?",
+        (eval_round,)
+    ).fetchall()
+    import io
+    import torch
+    result = {}
+    for uid, blob in rows:
+        spectra = torch.load(io.BytesIO(blob), map_location="cpu", weights_only=True)
+        result[uid] = {k: v.to(device) for k, v in spectra.items()}
+    return result
 
 
 def get_cached_result(conn, uid: int, year: int, repo_id: str, eval_round: int):
