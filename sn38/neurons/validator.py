@@ -27,8 +27,8 @@ from ..template.model_loader import load_model
 from ..template.constants import NETWORKS
 from ..template.model_store import download_model, parse_repo, get_repo_file_size, count_model_params, get_device, verify_commit_sha
 from ..template.backend_api import BackendAPI
-from ..template.validator_db import get_connection, get_cached_result, save_result, is_week_evaluated, mark_week_evaluated, cleanup_after_uid, get_unsynced_eval_details, mark_synced
-from ..template.svd_gate import check_svd_gate, svd_spectra, load_baselines, unload_baselines
+from ..template.validator_db import get_connection, get_cached_result, save_result, save_svd_spectra, load_all_svd_spectra, is_week_evaluated, mark_week_evaluated, cleanup_after_uid, get_unsynced_eval_details, mark_synced
+from ..template.svd_gate import check_svd_gate, svd_spectra, load_baselines, unload_baselines, dedup_by_svd
 from ..template.leak import evaluate
 from ..template.quality import run_quality_duels
 from ..template.round_results import RoundResults
@@ -170,11 +170,12 @@ def run_stage1(api, submissions, submission_times, config, all_years, conn, benc
 
                     svd_results = {}
                     if uid != owner_uid:
-                        candidate_spectra = svd_spectra(model.state_dict())
+                        candidate_spectra = svd_spectra(model.inner_state_dict())
                         for year in years:
                             gate_passed, avg_svd = check_svd_gate(candidate_spectra, year)
                             svd_results[year] = gate_passed
                             logger.info(f"UID {uid}: year {year} svd_dist={avg_svd:.6f} gate={'PASS' if gate_passed else 'FAIL'}")
+                        save_svd_spectra(conn, uid, eval_round, candidate_spectra)
                         del candidate_spectra
 
                     for year in years:
@@ -354,6 +355,16 @@ def run(args):
     # =========================================
     logger.info("=== Stage 1: Leak detection ===")
     leak_scores = run_stage1(api, submissions, submission_times, config, ALL_YEARS, conn, benchmarks, eval_round)
+
+    # =========================================
+    # SVD pairwise dedup
+    # =========================================
+    device = get_device()
+    all_spectra = load_all_svd_spectra(conn, eval_round, device)
+    if all_spectra:
+        accepted = dedup_by_svd(all_spectra, submission_times)
+        leak_scores = {uid: s for uid, s in leak_scores.items() if uid in accepted or uid == owner_uid}
+        del all_spectra
 
     # =========================================
     # STAGE 2: Quality evaluation (round-robin)

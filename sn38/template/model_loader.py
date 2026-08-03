@@ -90,6 +90,9 @@ class _HFWrapper(nn.Module):
     def parameters(self):
         return self.hf_model.parameters()
 
+    def inner_state_dict(self):
+        return self.hf_model.state_dict()
+
 
 class _ChronoGPTWrapper(nn.Module):
     """Wraps ChronoGPT with a unified interface."""
@@ -133,6 +136,9 @@ class _ChronoGPTWrapper(nn.Module):
         return self.model.parameters()
 
     def state_dict(self):
+        return self.model.state_dict()
+
+    def inner_state_dict(self):
         return self.model.state_dict()
 
 
