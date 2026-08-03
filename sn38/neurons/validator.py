@@ -170,7 +170,7 @@ def run_stage1(api, submissions, submission_times, config, all_years, conn, benc
 
                     svd_results = {}
                     if uid != owner_uid:
-                        candidate_spectra = svd_spectra(model.state_dict())
+                        candidate_spectra = svd_spectra(model.inner_state_dict())
                         for year in years:
                             gate_passed, avg_svd = check_svd_gate(candidate_spectra, year)
                             svd_results[year] = gate_passed
