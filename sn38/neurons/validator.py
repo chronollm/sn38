@@ -31,6 +31,7 @@ from ..template.validator_db import get_connection, get_cached_result, save_resu
 from ..template.svd_gate import check_svd_gate, svd_spectra, load_baselines, unload_baselines, dedup_by_svd
 from ..template.leak import evaluate
 from ..template.quality import run_quality_duels
+from ..template.quality_prompts import generate_prompts
 from ..template.round_results import RoundResults
 
 BACKEND_URL = os.environ.get("BACKEND_URL", "http://localhost:8000")
@@ -255,14 +256,11 @@ def run_stage2_and_score(api, leak_scores, submissions, submission_times, config
         final_scores[qualified[0][0]] = 1.0
     else:
         logger.info("=== Stage 2: Quality evaluation ===")
-        questions = api.get_quality_questions()
-        if not questions:
-            logger.warning("No quality questions, skipping stage 2")
-            final_scores = np.zeros(metagraph.n)
-            for uid, _ in qualified:
-                final_scores[uid] = normalized_leak[uid]
+        prompts = generate_prompts(config.get("eval_round", 0))
+        if not prompts:
+            raise RuntimeError("Failed to generate quality prompts")
         else:
-            win_rates = run_quality_duels(qualified, submissions, questions, metagraph, all_years)
+            win_rates = run_quality_duels(qualified, submissions, prompts, metagraph, all_years)
             leak_weight = config.get("leak_weight", 0.7)
             quality_weight = config.get("quality_weight", 0.3)
             final_scores = np.zeros(metagraph.n)
@@ -309,7 +307,8 @@ def run(args):
         format="%(levelname)-8s | %(message)s",
     )
 
-    api = BackendAPI(BACKEND_URL)
+    wallet = bt.Wallet(name=args.wallet_name, hotkey=args.wallet_hotkey)
+    api = BackendAPI(BACKEND_URL, hotkey=wallet.hotkey.ss58_address)
 
     config = api.get_config()
     eval_round = api.get_eval_round()
@@ -323,7 +322,6 @@ def run(args):
     owner_uid = NETWORKS[args.network]["owner_uid"]
 
     conn = get_connection()
-    wallet = bt.Wallet(name=args.wallet_name, hotkey=args.wallet_hotkey)
     subtensor = bt.Subtensor(network=args.network)
     metagraph = subtensor.metagraph(netuid=netuid)
 
@@ -371,6 +369,7 @@ def run(args):
     # STAGE 2: Quality evaluation (round-robin)
     # =========================================
     config["owner_uid"] = owner_uid
+    config["eval_round"] = eval_round
     final_scores, winner, uids, weights, results = run_stage2_and_score(
         api, leak_scores, submissions, submission_times, config, ALL_YEARS, metagraph
     )
