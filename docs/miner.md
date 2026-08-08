@@ -14,7 +14,8 @@ You train one model per year (2013-2024 included), upload them to HuggingFace, a
 
 ## Step 1: Train your models
 
-Models can use **any architecture loadable by HuggingFace `AutoModelForCausalLM`** (Llama, Qwen, Gemma, Mistral, etc.) or the native **ChronoGPT architecture**. Each model must be trained only on data available up to its cutoff year. A 2018 model must not contain any knowledge from 2019 or later.
+Models can use **any architecture loadable by HuggingFace `AutoModelForCausalLM`** (Llama, Qwen, Gemma, Mistral, etc.) or the native **ChronoGPT architecture**. Each model must be trained only on data available up to its cutoff year. A 2018
+model must not contain any knowledge from 2019 or later.
 
 Each HuggingFace repo must contain:
 
@@ -44,23 +45,27 @@ Since HuggingFace requires Python class definitions to load custom architectures
 
 **What to submit** — open a PR adding a folder under `sn38/architectures/<your-architecture>/` with:
 
-| File | Required | Description |
-|------|----------|-------------|
-| `configuration_<name>.py` | Yes | Config class inheriting `PretrainedConfig` |
-| `modeling_<name>.py` | Yes | Model class inheriting `PreTrainedModel` |
+| File                      | Required | Description                                |
+|---------------------------|----------|--------------------------------------------|
+| `configuration_<name>.py` | Yes      | Config class inheriting `PretrainedConfig` |
+| `modeling_<name>.py`      | Yes      | Model class inheriting `PreTrainedModel`   |
 
 **Requirements:**
+
 - Weights must be in `safetensors` format (no pickle)
 - Tokenizer must use `tokenizer.json` (HF standard). No custom tokenizer classes or pickle files
 - No arbitrary code execution in any file
 - The `model_type` in `config.json` must be prefixed with `sn38-` (e.g. `sn38-mymodel`) to avoid conflicts with architectures built into HuggingFace
 
 **Process:**
+
 1. Open a PR with your architecture files, or send them via DM to the team
 2. We review the code for security and correctness
 3. Once added, any miner can use your architecture with `trust_remote_code=False`
 
-**Why is this needed?** HuggingFace requires Python class definitions to instantiate custom architectures. The official way is to submit a PR to the [transformers library](https://huggingface.co/docs/transformers/main/en/modular_transformers), but the review process can take weeks or months. Our architecture registry speeds this up — we review and add your architecture so you can start competing immediately.
+**Why is this needed?** HuggingFace requires Python class definitions to instantiate custom architectures. The official way is to submit a PR to
+the [transformers library](https://huggingface.co/docs/transformers/main/en/modular_transformers), but the review process can take weeks or months. Our architecture registry speeds this up — we review and add your architecture so you can
+start competing immediately.
 
 ## Step 2: Create your models.json
 
@@ -80,6 +85,7 @@ To find your commit SHA, go to your repo on HuggingFace → Settings → History
 
 ```python
 from huggingface_hub import HfApi
+
 sha = HfApi().repo_info("your-username/chronogpt-2013").sha
 print(sha)  # e.g. a1b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6e7f8a9b0
 ```
@@ -136,9 +142,11 @@ Resubmit at any time with the same command. The backend polls the chain periodic
 
 The HuggingFace **dataset repo** containing your `models.json` must always be **public** — the backend needs to read it at any time.
 
-The individual **model repos** (the ones listed in `models.json`) can be kept **private** during the submission phase to prevent copying. They must be switched to **public within 1 hour after submissions close** so validators can download and evaluate them.
+The individual **model repos** (the ones listed in `models.json`) can be kept **private** during the submission phase to prevent copying. They must be switched to **public within 1 hour after submissions close** so validators can download
+and evaluate them.
 
 Timeline:
+
 1. Keep your dataset repo (`models.json`) public at all times
 2. Submit your models on-chain at any time (model repos can be private)
 3. Submissions close Monday 12:00 UTC
@@ -157,9 +165,52 @@ curl https://api.chronollm.com/rounds/current
 curl https://api.chronollm.com/submissions/{round}/{uid}
 ```
 
+## Self-test your model (leak detection)
+
+Before submitting, you can test if your model passes the leak detection. The test runs inside a TEE using the exact same evaluation code as the validator, against a separate dataset from production. Returns only PASS/FAIL. Rate limited to
+12 calls/day per hotkey. CPU only, no GPU needed.
+
+Your hotkey must be registered on SN38. All environment variables (hotkey, HF token) are [encrypted locally](https://docs.phala.com/phala-cloud/cvm/set-secure-environment-variables) by the Phala CLI before upload and only decrypted inside
+the TEE. No one, including Phala, can read them.
+
+### 1. Install Phala CLI
+
+```bash
+npm install -g phala
+phala login
+```
+
+### 2. Clone or update the subnet repo
+
+The deploy command references files from the repo (`docker-compose.self-test.yml`, `scripts/prelaunch.sh`), so make sure you have the latest version:
+
+```bash
+git clone git@github.com:chronollm/sn38.git
+cd sn38
+git pull
+```
+
+### 3. Deploy and run the self-test
+
+```bash
+phala deploy \
+  -c docker-compose.self-test.yml \
+  --pre-launch-script scripts/prelaunch.sh \
+  -e HOTKEY_FILE_CONTENT="$(cat ~/.bittensor/wallets/miner/hotkeys/default)" \
+  -e HF_TOKEN=hf_xxx \
+  -e HF_REPO=your-username/your-model@commit-sha \
+  --instance-type tdx.xlarge \
+  --no-dev-os
+```
+
+The test evaluates all years for the current submission round. A model that passes can expect to pass production. An overfit model will fail because the test uses a different dataset.
+
+> **Instance type**: `tdx.xlarge` (8 vCPU, 16GB) is the recommended minimum. For faster inference, you can use a larger instance (e.g. `tdx.2xlarge`). List available CPU instances with `phala instance-types`.
+
 ## Anti-copy protection
 
-Submitting someone else's model or an exact copy is pointless. During evaluation, the validator computes a hash of the model weights and checks that no other miner has submitted the same weights. The first submitter has priority — duplicates are rejected and receive the worst score. (Currently tied to miner UID, will be changed to hotkey in a future update.)
+Submitting someone else's model or an exact copy is pointless. During evaluation, the validator computes a hash of the model weights and checks that no other miner has submitted the same weights. The first submitter has priority —
+duplicates are rejected and receive the worst score. (Currently tied to miner UID, will be changed to hotkey in a future update.)
 
 ## Scoring
 

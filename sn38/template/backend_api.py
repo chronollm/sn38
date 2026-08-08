@@ -8,8 +8,8 @@ logger = logging.getLogger(__name__)
 
 
 class BackendAPI:
-    def __init__(self, backend_url: str):
-        self.session = ValidatorSession(backend_url)
+    def __init__(self, backend_url: str, hotkey: str = "unknown"):
+        self.session = ValidatorSession(backend_url, hotkey=hotkey)
         logger.info(f"Backend URL: {backend_url}")
         logger.info(f"TEE status: {self.session.is_tee}")
         logger.info(f"TLS verify: {self.session.session.verify}")
@@ -23,6 +23,9 @@ class BackendAPI:
 
     def get_eval_round(self):
         return self.session.get("/rounds/current").json()["eval_round"]
+
+    def get_submission_round(self):
+        return self.session.get("/rounds/current").json()["current_round"]
 
     def get_benchmark(self, cutoff_year, known=False):
         resp = self.session.get(f"/benchmark/{cutoff_year}", params={"known": known})
@@ -80,6 +83,22 @@ class BackendAPI:
             "score_known": score_known,
         })
         return resp.status_code == 200
+
+    def get_selftest_benchmark(self, cutoff_year, known=False):
+        resp = self.session.get(f"/benchmark-selftest/{cutoff_year}", params={"known": known})
+        if resp.status_code == 503:
+            raise RuntimeError("Self-test dataset not available")
+        if resp.status_code != 200:
+            raise RuntimeError(f"Backend /benchmark-selftest/{cutoff_year} returned {resp.status_code}")
+        return resp.json()
+
+    def check_leak_test_rate_limit(self, hotkey, repo):
+        """Check if miner can run a leak test. Raises on rate limit or error."""
+        resp = self.session.post("/self-test", json_data={"hotkey": hotkey, "repo": repo})
+        if resp.status_code == 429:
+            raise RuntimeError(resp.json().get("detail", "Rate limited"))
+        if resp.status_code != 200:
+            raise RuntimeError(resp.json().get("detail", f"Backend error: {resp.status_code}"))
 
     def get_quality_questions(self):
         resp = self.session.get("/quality/questions")

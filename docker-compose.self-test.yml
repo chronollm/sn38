@@ -1,0 +1,21 @@
+version: '3.8'
+services:
+  self-test:
+    image: chronollm/sn38-validator@sha256:60a61cb80e7620fb52b154df3b9ce4cb66cc5afb8585c6814e4982626cbd4da1
+    restart: "on-failure"
+    ports:
+      - "8081:8081"
+    environment:
+      - WALLET_NAME=miner
+      - BACKEND_URL=https://api.chronollm.com
+      # This secret is encrypted client-side by Phala CLI before transmission
+      - HOTKEY_FILE_CONTENT=${HOTKEY_FILE_CONTENT}
+      - HF_TOKEN=${HF_TOKEN}
+      - HF_REPO=${HF_REPO}
+    command: ["python", "-m", "sn38.neurons.miner_leak_test", "--repo", "${HF_REPO}"]
+    volumes:
+      - /var/run/dstack.sock:/var/run/dstack.sock
+      - self-test-cache:/tmp/model-cache
+
+volumes:
+  self-test-cache:
