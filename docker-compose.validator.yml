@@ -1,7 +1,7 @@
 version: '3.8'
 services:
   validator:
-    image: chronollm/sn38-validator@sha256:a74846fb30be90558021b43f6efad9ef03ae5d58a624bcb668a03a6b86d5eaba
+    image: chronollm/sn38-validator@sha256:54d41c101d9b242f3feaf20d239d90ad35fd9d5a6c9b7a421beda3bf2c356b4c
     restart: "on-failure"
     volumes:
       - /var/run/dstack.sock:/var/run/dstack.sock
