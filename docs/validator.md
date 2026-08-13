@@ -6,13 +6,13 @@ Validators evaluate miner models and set weights on-chain. The validator runs in
 
 ## Hardware Requirements
 
-Starting Round 3, evaluation requires a GPU for the cosine similarity gate and model inference.
+Evaluation requires a GPU for model inference and leak scoring.
 
 **Required:**
 - NVIDIA H200
 - 150 GB disk
 
-The cosine gate loads baseline models into VRAM for comparison. Evaluation runs once per week and the validator exits automatically after setting weights.
+Evaluation runs once per week and the validator exits automatically after setting weights.
 
 ## Prerequisites
 

@@ -2,7 +2,7 @@
 
 ## Overview
 
-Train chronologically consistent ChronoGPT models and compete for emissions.
+Train chronologically consistent language models and compete for emissions.
 
 You train one model per year (2013-2024 included), upload them to HuggingFace, and submit a mapping on-chain. Validators evaluate your models for consistency and quality.
 
@@ -14,8 +14,7 @@ You train one model per year (2013-2024 included), upload them to HuggingFace, a
 
 ## Step 1: Train your models
 
-Models can use **any architecture loadable by HuggingFace `AutoModelForCausalLM`** (Llama, Qwen, Gemma, Mistral, etc.) or the native **ChronoGPT architecture**. Each model must be trained only on data available up to its cutoff year. A 2018
-model must not contain any knowledge from 2019 or later.
+Models can use **any architecture loadable by HuggingFace `AutoModelForCausalLM`** (Llama, Qwen, Gemma, Mistral, etc.). Each model must be trained only on data available up to its cutoff year. A 2018 model must not contain any knowledge from 2019 or later.
 
 Each HuggingFace repo must contain:
 
@@ -209,17 +208,16 @@ The test evaluates all years for the current submission round. A model that pass
 
 ## Anti-copy protection
 
-Submitting someone else's model or an exact copy is pointless. During evaluation, the validator computes a hash of the model weights and checks that no other miner has submitted the same weights. The first submitter has priority —
-duplicates are rejected and receive the worst score. (Currently tied to miner UID, will be changed to hotkey in a future update.)
+Submitting someone else's model or an exact copy is pointless. During evaluation, the validator computes a hash of the model weights and checks that no other miner has submitted the same weights. Additionally, miners are compared pairwise using SVD spectral distance to detect near-duplicate models. The first submitter has priority, duplicates are rejected.
 
 ## Scoring
 
-You can find all the variables of the scoring method at:[https://api.chronollm.com/docs](https://api.chronollm.com/docs)
+All evaluation parameters are available at [api.chronollm.com/config](https://api.chronollm.com/config).
 
-Your models are evaluated in two stages:
+Your models are evaluated in two main stages:
 
-1. **Consistency check** — each year is validated against a private dataset. The score reflects how well your model respects its temporal boundary. Missing years or errors receive the worst score.
+1. **Leak detection (pass/fail)**: each year is validated against a private dataset. The model must know its training era (pre-cutoff) and must not leak knowledge from after its cutoff year (post-cutoff). Missing years or errors receive the worst score.
 
-2. **Quality evaluation** — the top 10 miners compete in round-robin duels judged by an LLM. The win rate becomes your quality score.
+2. **Quality duels**: qualified miners compete in round-robin 1v1 duels. Prompts are uniquely generated each round. Output quality is judged by an LLM. The win rate determines the final ranking.
 
-Final score: `0.7 * consistency_score + 0.3 * quality_win_rate`. Winner takes all.
+The leak test is a gate. Among models that pass, quality determines the winner.
