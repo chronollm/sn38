@@ -28,7 +28,7 @@ from ..template.constants import NETWORKS
 from ..template.model_store import download_model, parse_repo, get_repo_file_size, count_model_params, get_device, verify_commit_sha
 from ..template.backend_api import BackendAPI
 from ..template.validator_db import get_connection, get_cached_result, save_result, save_svd_spectra, load_all_svd_spectra, is_week_evaluated, mark_week_evaluated, cleanup_after_uid, get_unsynced_eval_details, mark_synced
-from ..template.svd_gate import check_svd_gate, svd_spectra, load_baselines, unload_baselines, dedup_by_svd
+from ..template.svd_gate import svd_spectra, dedup_by_svd
 from ..template.leak import evaluate
 from ..template.quality import run_quality_duels
 from ..template.quality_prompts import generate_prompts
@@ -99,8 +99,6 @@ def run_stage1(api, submissions, submission_times, config, all_years, conn, benc
     owner_uid = config.get("owner_uid", 0)
 
     device = get_device()
-    logger.info("Loading baselines for cosine gate...")
-    load_baselines(all_years, device)
 
     sorted_uids = sorted(submissions.keys(), key=lambda u: submission_times.get(u, "9999"))
     total = len(sorted_uids)
@@ -169,13 +167,8 @@ def run_stage1(api, submissions, submission_times, config, all_years, conn, benc
                         fail_repo_years()
                         continue
 
-                    svd_results = {}
                     if uid != owner_uid:
                         candidate_spectra = svd_spectra(model.inner_state_dict())
-                        for year in years:
-                            gate_passed, avg_svd = check_svd_gate(candidate_spectra, year)
-                            svd_results[year] = gate_passed
-                            logger.info(f"UID {uid}: year {year} svd_dist={avg_svd:.6f} gate={'PASS' if gate_passed else 'FAIL'}")
                         save_svd_spectra(conn, uid, eval_round, candidate_spectra)
                         del candidate_spectra
 
@@ -183,10 +176,6 @@ def run_stage1(api, submissions, submission_times, config, all_years, conn, benc
                         if time.time() - eval_start > config["max_eval_seconds"]:
                             logger.warning(f"UID {uid}: timeout, remaining years skipped")
                             break
-
-                        if not svd_results.get(year, True):
-                            fail_year(year)
-                            continue
 
                         bench = benchmarks[year]
                         logger.info(f"UID {uid}: evaluating year {year}...")
@@ -220,7 +209,6 @@ def run_stage1(api, submissions, submission_times, config, all_years, conn, benc
         logger.debug(f"UID {uid}: leak_score={leak_scores[uid]:.4f}")
         logger.info(f"Stage 1 progress: {i + 1}/{total} ({(i + 1) / total:.0%})")
 
-    unload_baselines()
     _sync_eval_details(api, conn)
     return leak_scores
 
