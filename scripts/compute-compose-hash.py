@@ -47,13 +47,7 @@ PHALA_DEFAULTS = {
 }
 
 
-def main():
-    parser = argparse.ArgumentParser(description="Compute Phala CVM compose-hash")
-    parser.add_argument("--target", choices=list(TARGETS.keys()), default="validator")
-    parser.add_argument("--verify", action="store_true", help="Verify against live CVM")
-    args = parser.parse_args()
-
-    target = TARGETS[args.target]
+def compute_hash(target_name, target):
     with open(target["compose"]) as f:
         docker_compose = f.read()
 
@@ -65,18 +59,24 @@ def main():
     app_compose["docker_compose_file"] = docker_compose
     app_compose["pre_launch_script"] = pre_launch_script
 
-    print(f"Target: {args.target}")
-
     h = get_compose_hash(app_compose)
-    print(f"compose-hash: {h}")
-    print(f"ALLOWED_COMPOSE_HASHES={h}")
+    print(f"[{target_name}] compose-hash: {h}")
+    return h
 
-    if args.verify:
-        result = subprocess.run(["phala", "cvms", "get", "--json"],
-                                capture_output=True, text=True)
-        live = json.loads(result.stdout)
-        print(f"Live CVM hash: {live['compose_hash']}")
-        print(f"Match: {h == live['compose_hash']}")
+
+def main():
+    parser = argparse.ArgumentParser(description="Compute Phala CVM compose-hash")
+    parser.add_argument("--target", choices=list(TARGETS.keys()) + ["all"], default="all")
+    args = parser.parse_args()
+
+    if args.target == "all":
+        hashes = []
+        for name, target in TARGETS.items():
+            hashes.append(compute_hash(name, target))
+        print(f"\nALLOWED_COMPOSE_HASHES={','.join(hashes)}")
+    else:
+        h = compute_hash(args.target, TARGETS[args.target])
+        print(f"\nALLOWED_COMPOSE_HASHES={h}")
 
 
 if __name__ == "__main__":

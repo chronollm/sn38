@@ -40,8 +40,19 @@ def run(args):
 
     logger.info("[2/6] Verifying hotkey on metagraph...")
     netuid = NETWORKS["finney"]["netuid"]
-    subtensor = bt.Subtensor(network="finney")
-    metagraph = subtensor.metagraph(netuid=netuid)
+    for attempt in range(5):
+        try:
+            subtensor = bt.Subtensor(network="finney")
+            metagraph = subtensor.metagraph(netuid=netuid)
+            break
+        except Exception as e:
+            if attempt < 2:
+                logger.warning(f"[2/6] Connection failed ({e}), retrying in 10s...")
+                import time
+                time.sleep(10)
+            else:
+                logger.error(f"[2/6] Failed to connect after 3 attempts: {e}")
+                return
     if hotkey not in metagraph.hotkeys:
         logger.error(f"Hotkey {hotkey} is not registered on SN{netuid}")
         return
@@ -78,6 +89,7 @@ def run(args):
 
             logger.info(f"[6/6] Evaluating {len(years)} year(s)...")
             all_passed = True
+            year_results = []
             for i, year in enumerate(years, 1):
                 logger.info(f"[6/6] Year {year} ({i}/{len(years)}) — fetching benchmark...")
                 bench_unknown = api.get_selftest_benchmark(year)
@@ -87,7 +99,10 @@ def run(args):
                 failed_leak, median_unknown = evaluate(model, device, bench_unknown)
                 passed_known, median_known = evaluate(model, device, bench_known)
 
-                passed = not failed_leak and passed_known
+                leak_ok = not failed_leak
+                known_ok = passed_known
+                passed = leak_ok and known_ok
+                year_results.append((year, leak_ok, known_ok))
                 logger.info(f"[6/6] Year {year} ({i}/{len(years)}) — {'PASS' if passed else 'FAIL'}")
 
                 if not passed:
@@ -101,9 +116,15 @@ def run(args):
         logger.error(f"Evaluation failed: {type(e).__name__}: {e}")
         return
 
-    result = "PASS" if all_passed else "FAIL"
     print(f"\n{'=' * 40}")
-    print(f"  Result: {result}")
+    print(f"  Model: {args.repo}")
+    print(f"  ----------------------------------------")
+    for year, leak_ok, known_ok in year_results:
+        print(f"  Year {year}:")
+        print(f"    Leak (post-cutoff):  {'PASS' if leak_ok else 'FAIL'}")
+        print(f"    Known (pre-cutoff):  {'PASS' if known_ok else 'FAIL'}")
+    print(f"  ----------------------------------------")
+    print(f"  Result: {'PASS' if all_passed else 'FAIL'}")
     print(f"{'=' * 40}")
 
 
