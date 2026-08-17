@@ -27,8 +27,8 @@ from ..template.model_loader import load_model
 from ..template.constants import NETWORKS
 from ..template.model_store import download_model, parse_repo, get_repo_file_size, count_model_params, get_device, verify_commit_sha
 from ..template.backend_api import BackendAPI
-from ..template.validator_db import get_connection, get_cached_result, save_result, save_svd_spectra, load_all_svd_spectra, is_week_evaluated, mark_week_evaluated, cleanup_after_uid, get_unsynced_eval_details, mark_synced
-from ..template.svd_gate import svd_spectra, dedup_by_svd
+from ..template.validator_db import get_connection, get_cached_result, save_result, is_week_evaluated, mark_week_evaluated, cleanup_after_uid, get_unsynced_eval_details, mark_synced
+from ..template.dedup import check_against_saved, save_model_weights, cleanup
 from ..template.leak import evaluate
 from ..template.quality import run_quality_duels
 from ..template.quality_prompts import generate_prompts
@@ -168,9 +168,18 @@ def run_stage1(api, submissions, submission_times, config, all_years, conn, benc
                         continue
 
                     if uid != owner_uid:
-                        candidate_spectra = svd_spectra(model.inner_state_dict())
-                        save_svd_spectra(conn, uid, eval_round, candidate_spectra)
-                        del candidate_spectra
+                        state = model.inner_state_dict()
+
+                        passed_dedup, matched_uid, reason = check_against_saved(state)
+                        if not passed_dedup:
+                            logger.warning(f"UID {uid}: duplicate of UID {matched_uid} ({reason}), skipping")
+                            del state, model
+                            _free_gpu()
+                            fail_repo_years()
+                            continue
+
+                        save_model_weights(state, uid)
+                        del state
 
                     for year in years:
                         if time.time() - eval_start > config["max_eval_seconds"]:
@@ -290,10 +299,9 @@ def run_stage2_and_score(api, leak_scores, submissions, submission_times, config
 
 
 def run(args):
-    logging.basicConfig(
-        level=logging.INFO,
-        format="%(levelname)-8s | %(message)s",
-    )
+    logging.basicConfig(level=logging.WARNING, format="%(levelname)-8s | %(message)s")
+    logging.getLogger("sn38").setLevel(logging.INFO)
+    logging.getLogger(__name__).setLevel(logging.INFO)
 
     wallet = bt.Wallet(name=args.wallet_name, hotkey=args.wallet_hotkey)
     api = BackendAPI(BACKEND_URL, hotkey=wallet.hotkey.ss58_address)
@@ -340,18 +348,9 @@ def run(args):
     # =========================================
     # STAGE 1: Leak detection
     # =========================================
-    logger.info("=== Stage 1: Leak detection ===")
+    logger.info("=== Stage 1: Leak detection + dedup (SVD + cosine) ===")
     leak_scores = run_stage1(api, submissions, submission_times, config, ALL_YEARS, conn, benchmarks, eval_round)
-
-    # =========================================
-    # SVD pairwise dedup
-    # =========================================
-    device = get_device()
-    all_spectra = load_all_svd_spectra(conn, eval_round, device)
-    if all_spectra:
-        accepted = dedup_by_svd(all_spectra, submission_times)
-        leak_scores = {uid: s for uid, s in leak_scores.items() if uid in accepted or uid == owner_uid}
-        del all_spectra
+    cleanup()
 
     # =========================================
     # STAGE 2: Quality evaluation (round-robin)

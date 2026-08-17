@@ -1,25 +1,36 @@
-"""SVD spectral analysis — pairwise dedup between miners.
+"""Weight comparison functions for dedup.
 
-Compares singular value spectra of weight matrices. Invariant to
-rotation and permutation attacks that bypass cosine similarity.
+1. SVD spectral distance: catches weight copies and scaling attacks.
+2. Weight cosine similarity (top percentile): catches rotation/reshaping
+   attacks where some layers must remain unchanged to preserve function.
 """
 
-import logging
-
 import torch
-
-logger = logging.getLogger(__name__)
+import torch.nn.functional as F
 
 SVD_THRESHOLD = 0.01
 SVD_TOP_RATIO = 0.25
+COSINE_THRESHOLD = 0.999
+COSINE_PERCENTILE = 0.25
 
 
 def svd_spectra(state_dict):
-    """Extract singular value spectra for all 2D weight matrices."""
-    spectra = {}
+    """Extract singular value spectra for all 2D weight matrices (batched GPU)."""
+    groups = {}
     for name, param in state_dict.items():
         if param.ndim == 2 and min(param.shape) > 1:
-            spectra[name] = torch.linalg.svdvals(param.float())
+            shape = param.shape
+            if shape not in groups:
+                groups[shape] = []
+            groups[shape].append((name, param.float()))
+
+    spectra = {}
+    with torch.no_grad():
+        for shape, items in groups.items():
+            batch = torch.stack([p for _, p in items])
+            svs = torch.linalg.svdvals(batch)
+            for i, (name, _) in enumerate(items):
+                spectra[name] = svs[i]
     return spectra
 
 
@@ -32,7 +43,7 @@ def _compare_spectra(spectra_a, spectra_b):
     distances = []
     for name in common:
         sv_a = spectra_a[name]
-        sv_b = spectra_b[name]
+        sv_b = spectra_b[name].to(sv_a.device)
         if sv_a.shape != sv_b.shape:
             continue
         k = max(1, int(len(sv_a) * SVD_TOP_RATIO))
@@ -46,25 +57,35 @@ def _compare_spectra(spectra_a, spectra_b):
     return sum(distances) / len(distances)
 
 
-def dedup_by_svd(spectra_dict, submission_times, threshold=SVD_THRESHOLD):
-    """Remove duplicate miners by pairwise SVD comparison.
+def _check_weight_cosine(state_a, state_b, threshold=COSINE_THRESHOLD, percentile=COSINE_PERCENTILE):
+    """Check if two models share too many similar weight matrices.
 
-    Sorts by submission time — earliest submitter wins.
-    Returns set of accepted UIDs.
+    Batched GPU cosine similarity, then checks if the top percentile
+    exceeds the threshold. Architecture-agnostic.
+    Returns (passed, top_cosine).
     """
-    sorted_uids = sorted(spectra_dict.keys(), key=lambda u: submission_times.get(u, "9999"))
-    accepted = []
+    common = sorted(set(state_a) & set(state_b))
+    groups = {}
+    with torch.no_grad():
+        for key in common:
+            a, b = state_a[key], state_b[key]
+            if a.shape == b.shape and a.numel() > 1:
+                size = a.numel()
+                if size not in groups:
+                    groups[size] = {"a": [], "b": []}
+                groups[size]["a"].append(a.flatten().float())
+                groups[size]["b"].append(b.to(a.device).flatten().float())
 
-    for uid in sorted_uids:
-        is_dup = False
-        for accepted_uid in accepted:
-            dist = _compare_spectra(spectra_dict[uid], spectra_dict[accepted_uid])
-            if dist is not None and dist < threshold:
-                logger.warning(f"UID {uid} is a copy of UID {accepted_uid} (svd_dist={dist:.6f}), removing")
-                is_dup = True
-                break
-        if not is_dup:
-            accepted.append(uid)
+        cos_sims = []
+        for group in groups.values():
+            batch_a = torch.stack(group["a"])
+            batch_b = torch.stack(group["b"])
+            sims = F.cosine_similarity(batch_a, batch_b, dim=1)
+            cos_sims.extend(sims.tolist())
 
-    logger.info(f"SVD dedup: {len(spectra_dict)} miners → {len(accepted)} unique")
-    return set(accepted)
+    if not cos_sims:
+        return True, 0.0
+    cos_sims.sort(reverse=True)
+    top = cos_sims[:max(1, int(len(cos_sims) * percentile))]
+    avg_top = sum(top) / len(top)
+    return avg_top < threshold, avg_top
