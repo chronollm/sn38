@@ -92,13 +92,18 @@ class BackendAPI:
             raise RuntimeError(f"Backend /benchmark-selftest/{cutoff_year} returned {resp.status_code}")
         return resp.json()
 
-    def check_leak_test_rate_limit(self, hotkey, repo):
+    def check_leak_test_rate_limit(self, hotkey, repo, coldkey):
         """Check if miner can run a leak test. Raises on rate limit or error."""
-        resp = self.session.post("/self-test", json_data={"hotkey": hotkey, "repo": repo})
+        resp = self.session.post("/self-test", json_data={"repo": repo, "coldkey": coldkey})
         if resp.status_code == 429:
             raise RuntimeError(resp.json().get("detail", "Rate limited"))
         if resp.status_code != 200:
             raise RuntimeError(resp.json().get("detail", f"Backend error: {resp.status_code}"))
+
+    def get_dedup_probes(self, eval_round):
+        resp = self.session.get(f"/dedup-probes/{eval_round}")
+        resp.raise_for_status()
+        return resp.json()
 
     def get_quality_questions(self):
         resp = self.session.get("/quality/questions")

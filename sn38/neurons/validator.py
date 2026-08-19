@@ -28,7 +28,7 @@ from ..template.constants import NETWORKS
 from ..template.model_store import download_model, parse_repo, get_repo_file_size, count_model_params, get_device, verify_commit_sha
 from ..template.backend_api import BackendAPI
 from ..template.validator_db import get_connection, get_cached_result, save_result, is_week_evaluated, mark_week_evaluated, cleanup_after_uid, get_unsynced_eval_details, mark_synced
-from ..template.dedup import check_against_saved, save_model_weights, cleanup
+from ..template.dedup import check_against_saved, save_candidate, cleanup
 from ..template.leak import evaluate
 from ..template.quality import run_quality_duels
 from ..template.quality_prompts import generate_prompts
@@ -96,9 +96,11 @@ def run_stage1(api, submissions, submission_times, config, all_years, conn, benc
     """Evaluate all miners for leak detection. Returns {uid: score}."""
     WORST_SCORE = 0.0
     leak_scores = {}
-    owner_uid = config.get("owner_uid", 0)
 
     device = get_device()
+
+    dedup_probes = api.get_dedup_probes(eval_round)
+    logger.info("Loaded dedup probes")
 
     sorted_uids = sorted(submissions.keys(), key=lambda u: submission_times.get(u, "9999"))
     total = len(sorted_uids)
@@ -167,19 +169,18 @@ def run_stage1(api, submissions, submission_times, config, all_years, conn, benc
                         fail_repo_years()
                         continue
 
-                    if uid != owner_uid:
-                        state = model.inner_state_dict()
+                    state = model.inner_state_dict()
 
-                        passed_dedup, matched_uid, reason = check_against_saved(state)
-                        if not passed_dedup:
-                            logger.warning(f"UID {uid}: duplicate of UID {matched_uid} ({reason}), skipping")
-                            del state, model
-                            _free_gpu()
-                            fail_repo_years()
-                            continue
+                    passed_dedup, matched_uid, reason, logits = check_against_saved(model, state, device, dedup_probes)
+                    if not passed_dedup:
+                        logger.warning(f"UID {uid}: duplicate of UID {matched_uid} ({reason}), skipping")
+                        del state, logits, model
+                        _free_gpu()
+                        fail_repo_years()
+                        continue
 
-                        save_model_weights(state, uid)
-                        del state
+                    save_candidate(state, uid, logits)
+                    del state, logits
 
                     for year in years:
                         if time.time() - eval_start > config["max_eval_seconds"]:

@@ -56,7 +56,9 @@ def run(args):
     if hotkey not in metagraph.hotkeys:
         logger.error(f"Hotkey {hotkey} is not registered on SN{netuid}")
         return
-    logger.info(f"[2/6] Hotkey verified on SN{netuid}")
+    uid = metagraph.hotkeys.index(hotkey)
+    coldkey = metagraph.coldkeys[uid]
+    logger.info(f"[2/6] Hotkey verified on SN{netuid} (uid={uid}, coldkey={coldkey[:12]}...)")
 
     logger.info("[3/6] Connecting to backend...")
     api = BackendAPI(BACKEND_URL, hotkey=hotkey)
@@ -64,7 +66,7 @@ def run(args):
     logger.info(f"[3/6] Config: {config}")
 
     try:
-        api.check_leak_test_rate_limit(hotkey, args.repo)
+        api.check_leak_test_rate_limit(hotkey, args.repo, coldkey)
     except RuntimeError as e:
         logger.error(str(e))
         return
