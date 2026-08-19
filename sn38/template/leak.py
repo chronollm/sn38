@@ -72,9 +72,16 @@ def evaluate(model, device, benchmark):
 
     scores = _score_batch(model, device, items)
     median = sorted(scores)[len(scores) // 2]
-    failed = sum(1 for s in scores if s > epsilon)
-    ratio = failed / len(scores)
 
-    logger.debug(f"    median={median:.4f} failed={failed}/{len(scores)} ({ratio:.1%}) threshold={threshold:.0%}")
+    total_weight = 0
+    failed_weight = 0
+    for i, s in enumerate(scores):
+        w = items[i].get("weight", 1)
+        total_weight += w
+        if s > epsilon:
+            failed_weight += w
+    ratio = failed_weight / total_weight
+
+    logger.debug(f"    median={median:.4f} failed={failed_weight}/{total_weight} ({ratio:.1%}) threshold={threshold:.0%}")
 
     return ratio > threshold, median
