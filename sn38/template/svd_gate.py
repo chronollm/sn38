@@ -1,17 +1,12 @@
-"""Weight comparison functions for dedup.
-
-1. SVD spectral distance: catches weight copies and scaling attacks.
-2. Weight cosine similarity (top percentile): catches rotation/reshaping
-   attacks where some layers must remain unchanged to preserve function.
-"""
+"""Weight and functional comparison functions for dedup."""
 
 import torch
 import torch.nn.functional as F
 
-SVD_THRESHOLD = 0.01
+SVD_THRESHOLD = 0.001
 SVD_TOP_RATIO = 0.25
-COSINE_THRESHOLD = 0.999
-COSINE_PERCENTILE = 0.25
+COSINE_THRESHOLD = 0.95
+KL_THRESHOLD = 1.0
 
 
 def svd_spectra(state_dict):
@@ -57,12 +52,10 @@ def _compare_spectra(spectra_a, spectra_b):
     return sum(distances) / len(distances)
 
 
-def _check_weight_cosine(state_a, state_b, threshold=COSINE_THRESHOLD, percentile=COSINE_PERCENTILE):
-    """Check if two models share too many similar weight matrices.
+def _check_weight_cosine(state_a, state_b, threshold=COSINE_THRESHOLD):
+    """Check weight cosine similarity (average of all layers).
 
-    Batched GPU cosine similarity, then checks if the top percentile
-    exceeds the threshold. Architecture-agnostic.
-    Returns (passed, top_cosine).
+    Returns (passed, avg_cosine).
     """
     common = sorted(set(state_a) & set(state_b))
     groups = {}
@@ -85,7 +78,60 @@ def _check_weight_cosine(state_a, state_b, threshold=COSINE_THRESHOLD, percentil
 
     if not cos_sims:
         return True, 0.0
-    cos_sims.sort(reverse=True)
-    top = cos_sims[:max(1, int(len(cos_sims) * percentile))]
-    avg_top = sum(top) / len(top)
-    return avg_top < threshold, avg_top
+    avg = sum(cos_sims) / len(cos_sims)
+    return avg < threshold, avg
+
+
+def _to_input_ids(model, data):
+    if isinstance(data[0], list):
+        return torch.tensor(data)
+    all_ids = []
+    for text in data:
+        all_ids.append(model.encode(text))
+    max_len = max(len(ids) for ids in all_ids)
+    pad_id = model.pad_token_id
+    return torch.tensor([ids + [pad_id] * (max_len - len(ids)) for ids in all_ids])
+
+
+def _compute_kl_logits(model, device, probes):
+    """Compute logits fingerprints from backend probes. Returns dict of logits."""
+    logits = {}
+    with torch.no_grad():
+        for key, data in probes.items():
+            input_ids = _to_input_ids(model, data).to(device)
+            logits[key] = model(input_ids)[:, -1, :].float()
+    return logits
+
+
+def _compare_kl_logits(logits_dict_a, logits_dict_b, threshold=KL_THRESHOLD):
+    """Compare two logit fingerprints via symmetric KL divergence.
+
+    Uses max of medians across probe types.
+    Returns (passed, max_median_kl).
+    """
+    medians = []
+    for name in logits_dict_a:
+        if name not in logits_dict_b:
+            continue
+        la = logits_dict_a[name]
+        lb = logits_dict_b[name].to(la.device)
+
+        if la.shape[-1] != lb.shape[-1]:
+            return True, float("inf")
+
+        log_probs_a = F.log_softmax(la, dim=-1)
+        log_probs_b = F.log_softmax(lb, dim=-1)
+        probs_a = F.softmax(la, dim=-1)
+        probs_b = F.softmax(lb, dim=-1)
+
+        kl_ab = F.kl_div(log_probs_a, probs_b, reduction="none").sum(dim=-1)
+        kl_ba = F.kl_div(log_probs_b, probs_a, reduction="none").sum(dim=-1)
+        symmetric_kl = (kl_ab + kl_ba) / 2
+
+        medians.append(symmetric_kl.median().item())
+
+    if not medians:
+        return True, 999.0
+
+    max_median = max(medians)
+    return max_median >= threshold, max_median

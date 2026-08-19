@@ -100,6 +100,11 @@ class BackendAPI:
         if resp.status_code != 200:
             raise RuntimeError(resp.json().get("detail", f"Backend error: {resp.status_code}"))
 
+    def get_dedup_probes(self, eval_round):
+        resp = self.session.get(f"/dedup-probes/{eval_round}")
+        resp.raise_for_status()
+        return resp.json()
+
     def get_quality_questions(self):
         resp = self.session.get("/quality/questions")
         if resp.status_code != 200:
