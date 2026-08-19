@@ -29,11 +29,11 @@ def svd_spectra(state_dict):
     return spectra
 
 
-def _compare_spectra(spectra_a, spectra_b):
-    """Compare two models' spectra. Returns avg distance or None."""
+def _compare_spectra(spectra_a, spectra_b, threshold=SVD_THRESHOLD):
+    """Compare two models' spectra. Returns (passed, avg_distance)."""
     common = sorted(set(spectra_b.keys()) & set(spectra_a.keys()))
     if not common:
-        return None
+        return True, float("inf")
 
     distances = []
     for name in common:
@@ -48,8 +48,9 @@ def _compare_spectra(spectra_a, spectra_b):
         distances.append(dist.item())
 
     if not distances:
-        return None
-    return sum(distances) / len(distances)
+        return True, float("inf")
+    avg = sum(distances) / len(distances)
+    return avg >= threshold, avg
 
 
 def _check_weight_cosine(state_a, state_b, threshold=COSINE_THRESHOLD):
@@ -131,7 +132,7 @@ def _compare_kl_logits(logits_dict_a, logits_dict_b, threshold=KL_THRESHOLD):
         medians.append(symmetric_kl.median().item())
 
     if not medians:
-        return True, 999.0
+        return True, float("inf")
 
     max_median = max(medians)
     return max_median >= threshold, max_median

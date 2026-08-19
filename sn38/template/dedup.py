@@ -48,7 +48,7 @@ def check_against_saved(model, state_dict, device, probes, svd_threshold=SVD_THR
 
         t0 = time.time()
         saved_spectra = torch.load(os.path.join(CANDIDATES_DIR, f"uid_{saved_uid}.spectra.pt"), map_location=str(device), weights_only=True)
-        svd_dist = _compare_spectra(candidate_spectra, saved_spectra)
+        svd_passed, svd_dist = _compare_spectra(candidate_spectra, saved_spectra, threshold=svd_threshold)
         del saved_spectra
         t_svd = time.time() - t0
 
@@ -66,11 +66,10 @@ def check_against_saved(model, state_dict, device, probes, svd_threshold=SVD_THR
         del saved_logits
         t_kl = time.time() - t0
 
-        svd_str = f"{svd_dist:.4f}" if svd_dist is not None else "None"
-        logger.info(f"vs UID {saved_uid}: svd={t_svd:.1f}s cos={t_cos:.1f}s kl={t_kl:.1f}s | svd={svd_str} cosine={avg_cosine:.4f} kl={median_kl:.4f}")
+        logger.info(f"vs UID {saved_uid}: svd={t_svd:.1f}s cos={t_cos:.1f}s kl={t_kl:.1f}s | svd={svd_dist:.4f} cosine={avg_cosine:.4f} kl={median_kl:.4f}")
 
-        if not kl_passed:
-            return False, saved_uid, f"kl={median_kl:.4f} svd={svd_str} cosine={avg_cosine:.4f}", candidate_logits
+        if not svd_passed or not cosine_passed or not kl_passed:
+            return False, saved_uid, f"kl={median_kl:.4f} svd={svd_dist:.4f} cosine={avg_cosine:.4f}", candidate_logits
 
     return True, None, "", candidate_logits
 
