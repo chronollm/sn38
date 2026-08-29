@@ -77,11 +77,13 @@ Rules:
 - Write engaging, varied prompts — avoid generic patterns like "X wanted to do Y" or "X and his friends did Y"
 - Do NOT include the expected answer
 - Make prompts CHALLENGING — they should require real knowledge, reasoning, or strong language skills to complete well. Avoid trivial completions that any model could produce
+- Avoid prompts where the answer is a single obvious word (e.g. "The capital of France is"). Instead, write prompts that require a phrase or sentence to complete well
+- Prefer prompts that can be completed in multiple valid ways, so the quality of the completion matters
 
 Return a JSON object with a "prompts" key containing an array of objects, each with a "prompt" field."""
 
 
-def generate_prompts(eval_round, n_per_category=13):
+def generate_prompts(eval_round, n_per_category=50):
     """Generate fresh quality prompts for a given round.
 
     Returns a list of {"prompt": ..., "category": ...}
