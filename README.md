@@ -12,7 +12,36 @@ Standard LLMs are trained on data from all time periods. When used for financial
 
 Miners train language models with strict temporal boundaries. Each model must be trained **only on data available up to its cutoff year**. A model for 2018 must know nothing about 2019 or beyond.
 
-## How it works
+## Try it
+
+Pick a model from the [leaderboard](https://leaderboard.chronollm.com/) and chat with it. Each model only knows events up to its vintage year.
+
+These are completion models. Type the beginning of a sentence and the model will continue it.  
+Question answering is not yet available but will be supported from round 10.
+
+```bash
+# Install uv (if not already installed)
+curl -LsSf https://astral.sh/uv/install.sh | sh
+
+# Clone the repo and install dependencies
+git clone https://github.com/chronollm/sn38.git
+cd sn38
+uv sync
+
+# Chat with a model
+uv run python -m sn38.neurons.chat owner/repo
+```
+
+Example with a 2017 vintage model:
+```
+> The president of the United States in 2017 was ↵
+Donald Trump, who took office on January 20, 2017.
+
+> Bitcoin reached its all-time high in ↵
+December 2017, when it briefly surpassed $19,000.
+```
+
+## How the subnet works
 
 ```
 Miners                          Validators (TEE)                    Backend (private)
