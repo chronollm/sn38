@@ -85,7 +85,7 @@ judge = Judge()
 
 
 def duel(miner_completions, uid_a, uid_b, prompts):
-    """Run a duel between two miners with A/B swap. Returns winner uid or None for tie."""
+    """Run a duel between two miners with A/B swap. Returns (wins_a, wins_b, total)."""
     tasks = []
     swap_flags = []
     for i, q in enumerate(prompts):
@@ -111,11 +111,7 @@ def duel(miner_completions, uid_a, uid_b, prompts):
             wins_b += 1
     logger.info(f"  UID {uid_a} ({wins_a}) vs UID {uid_b} ({wins_b})")
 
-    if wins_a > wins_b:
-        return uid_a
-    elif wins_b > wins_a:
-        return uid_b
-    return None
+    return wins_a, wins_b, len(prompts)
 
 
 def _generate_for_year(uid, submissions, eval_year, prompts, device):
@@ -144,25 +140,25 @@ def _generate_for_year(uid, submissions, eval_year, prompts, device):
 
 
 def _run_round_robin(miner_completions, prompts, metagraph, uids):
-    """Run round-robin duels and return win rates."""
-    wins = {uid: 0 for uid in uids}
+    """Run round-robin duels and return prompt-level win rates."""
+    prompt_wins = {uid: 0 for uid in uids}
+    total_prompts = {uid: 0 for uid in uids}
 
     for i in range(len(uids)):
         for j in range(i + 1, len(uids)):
             uid_a, uid_b = uids[i], uids[j]
             logger.info(f"Duel: UID {uid_a} vs UID {uid_b}")
-            winner = duel(miner_completions, uid_a, uid_b, prompts)
+            wins_a, wins_b, n_prompts = duel(miner_completions, uid_a, uid_b, prompts)
 
-            if winner == uid_a:
-                wins[uid_a] += 1
-            elif winner == uid_b:
-                wins[uid_b] += 1
+            prompt_wins[uid_a] += wins_a
+            prompt_wins[uid_b] += wins_b
+            total_prompts[uid_a] += n_prompts
+            total_prompts[uid_b] += n_prompts
 
-    total_opponents = max(1, len(uids) - 1)
     win_rates = np.zeros(metagraph.n)
     for uid in uids:
-        win_rates[uid] = wins[uid] / total_opponents
-        logger.info(f"UID {uid}: wins={wins[uid]}/{total_opponents} win_rate={win_rates[uid]:.4f}")
+        win_rates[uid] = prompt_wins[uid] / max(1, total_prompts[uid])
+        logger.info(f"UID {uid}: prompt_wins={prompt_wins[uid]}/{total_prompts[uid]} win_rate={win_rates[uid]:.4f}")
 
     return win_rates
 
