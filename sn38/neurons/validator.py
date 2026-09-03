@@ -157,7 +157,6 @@ def run_stage1(api, submissions, submission_times, config, all_years, conn, benc
                         fail_repo_years()
                         continue
 
-                    eval_start = time.time()
                     model, tokenizer = load_model(path, device)
                     param_count = count_model_params(model)
                     logger.info(f"UID {uid}: loaded {param_count / 1e6:.0f}M params")
@@ -182,6 +181,7 @@ def run_stage1(api, submissions, submission_times, config, all_years, conn, benc
                     save_candidate(state, uid, logits)
                     del state, logits
 
+                    eval_start = time.time()
                     for year in years:
                         if time.time() - eval_start > config["max_eval_seconds"]:
                             logger.warning(f"UID {uid}: timeout, remaining years skipped")
