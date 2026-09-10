@@ -26,11 +26,11 @@ def generate_completion(model, device, prompt, max_new_tokens=50):
     return model.generate(prompt, max_new_tokens=max_new_tokens)
 
 
-JUDGE_SYSTEM_PROMPT = """You are a judge evaluating two AI-generated responses. The prompt is either a text to complete or a direct question to answer.
+JUDGE_SYSTEM_PROMPT = """You are a judge evaluating two AI-generated responses to a question.
 
 Evaluate based on:
 1. Factual accuracy
-2. Relevance — how well the response continues the text or answers the question
+2. Relevance — how well the response answers the question
 3. Coherence and clarity
 4. Knowledge demonstrated
 
