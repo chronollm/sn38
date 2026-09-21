@@ -182,7 +182,10 @@ async def run_quality_duels(qualified, submissions, prompts, metagraph, all_year
         for uid in uids:
             logger.info(f"UID {uid}: generating completions (year {year})")
             completions[uid] = _generate_for_year(uid, submissions, year, prompts, device)
-        all_win_rates.append(await _run_round_robin(judge, completions, prompts, metagraph, uids))
+        active = [uid for uid in uids if any(completions[uid])]
+        if len(active) < len(uids):
+            logger.warning(f"Skipped {len(uids) - len(active)} miners with inaccessible models")
+        all_win_rates.append(await _run_round_robin(judge, completions, prompts, metagraph, active))
 
     win_rates = sum(all_win_rates) / len(all_win_rates)
     for uid in uids:
