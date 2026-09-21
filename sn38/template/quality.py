@@ -19,6 +19,7 @@ from openai.types.chat import ChatCompletionSystemMessageParam, ChatCompletionUs
 
 from .model_loader import load_model
 from .model_store import download_model, parse_repo, get_device
+from .validator_db import get_quality_completions, save_quality_completions
 
 
 def generate_completion(model, device, prompt, max_new_tokens=100):
@@ -160,7 +161,7 @@ async def _run_round_robin(judge, miner_completions, prompts, metagraph, uids):
     return win_rates
 
 
-async def run_quality_duels(qualified, submissions, prompts, metagraph, all_years):
+async def run_quality_duels(qualified, submissions, prompts, metagraph, all_years, eval_round=0, conn=None):
     """Round-robin 1v1 duels on two years: oldest + random.
 
     Returns:
@@ -180,8 +181,15 @@ async def run_quality_duels(qualified, submissions, prompts, metagraph, all_year
         logger.info(f"=== Quality round: year {year} ===")
         completions = {}
         for uid in uids:
-            logger.info(f"UID {uid}: generating completions (year {year})")
-            completions[uid] = _generate_for_year(uid, submissions, year, prompts, device)
+            cached = get_quality_completions(conn, eval_round, int(year), uid) if conn else None
+            if cached:
+                completions[uid] = cached
+                logger.info(f"UID {uid}: loaded from cache")
+            else:
+                logger.info(f"UID {uid}: generating completions (year {year})")
+                completions[uid] = _generate_for_year(uid, submissions, year, prompts, device)
+                if conn and any(completions[uid]):
+                    save_quality_completions(conn, eval_round, int(year), uid, completions[uid])
         active = [uid for uid in uids if any(completions[uid])]
         if len(active) < len(uids):
             logger.warning(f"Skipped {len(uids) - len(active)} miners with inaccessible models")

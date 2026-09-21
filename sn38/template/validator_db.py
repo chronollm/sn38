@@ -37,6 +37,19 @@ def get_connection():
             PRIMARY KEY (uid, round)
         )
     """)
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS quality_prompts (
+            round INTEGER PRIMARY KEY,
+            prompts_json TEXT NOT NULL
+        )
+    """)
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS quality_completions (
+            round INTEGER, year INTEGER, uid INTEGER,
+            completions_json TEXT NOT NULL,
+            PRIMARY KEY (round, year, uid)
+        )
+    """)
     conn.commit()
     _migrate(conn)
     return conn
@@ -123,6 +136,43 @@ def mark_synced(conn, uid: int, year: int, repo_id: str, eval_round: int):
     conn.execute(
         "UPDATE evaluations SET synced = 1 WHERE uid = ? AND year = ? AND repo_id = ? AND round = ?",
         (uid, year, repo_id, eval_round)
+    )
+    conn.commit()
+
+
+def get_quality_prompts(conn, eval_round: int):
+    row = conn.execute("SELECT prompts_json FROM quality_prompts WHERE round=?", (eval_round,)).fetchone()
+    if row is None:
+        return None
+    import json
+    return json.loads(row[0])
+
+
+def save_quality_prompts(conn, eval_round: int, prompts: list):
+    import json
+    conn.execute(
+        "INSERT OR REPLACE INTO quality_prompts (round, prompts_json) VALUES (?, ?)",
+        (eval_round, json.dumps(prompts))
+    )
+    conn.commit()
+
+
+def get_quality_completions(conn, eval_round: int, year: int, uid: int):
+    row = conn.execute(
+        "SELECT completions_json FROM quality_completions WHERE round=? AND year=? AND uid=?",
+        (eval_round, year, uid)
+    ).fetchone()
+    if row is None:
+        return None
+    import json
+    return json.loads(row[0])
+
+
+def save_quality_completions(conn, eval_round: int, year: int, uid: int, completions: list):
+    import json
+    conn.execute(
+        "INSERT OR REPLACE INTO quality_completions (round, year, uid, completions_json) VALUES (?, ?, ?, ?)",
+        (eval_round, year, uid, json.dumps(completions))
     )
     conn.commit()
 
