@@ -21,7 +21,7 @@ from .model_loader import load_model
 from .model_store import download_model, parse_repo, get_device
 
 
-def generate_completion(model, device, prompt, max_new_tokens=50):
+def generate_completion(model, device, prompt, max_new_tokens=100):
     """Generate a completion using the model's built-in generate method."""
     return model.generate(prompt, max_new_tokens=max_new_tokens)
 

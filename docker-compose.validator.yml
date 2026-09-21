@@ -1,7 +1,7 @@
 version: '3.8'
 services:
   validator:
-    image: chronollm/sn38-validator@sha256:2df5f65f6b980bca6990f539f293f7516fa0d9241b019a4d138ed07b80aa7489
+    image: chronollm/sn38-validator@sha256:6e2c4261728791f57c2e7549e3911a38ac6b88ec90c5898a547c87617714777a
 
     restart: "on-failure"
     volumes:
