@@ -11,6 +11,7 @@ Usage:
 """
 
 import argparse
+import asyncio
 import hashlib
 import logging
 import os
@@ -258,7 +259,7 @@ def run_stage2_and_score(api, leak_scores, submissions, submission_times, config
         if not prompts:
             raise RuntimeError("Failed to generate quality prompts")
         else:
-            win_rates = run_quality_duels(qualified, submissions, prompts, metagraph, all_years)
+            win_rates = asyncio.run(run_quality_duels(qualified, submissions, prompts, metagraph, all_years))
             leak_weight = config.get("leak_weight", 0.7)
             quality_weight = config.get("quality_weight", 0.3)
             final_scores = np.zeros(metagraph.n)
