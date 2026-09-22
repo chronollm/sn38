@@ -11,6 +11,7 @@ Usage:
 """
 
 import argparse
+import asyncio
 import hashlib
 import logging
 import os
@@ -27,7 +28,7 @@ from ..template.model_loader import load_model
 from ..template.constants import NETWORKS
 from ..template.model_store import download_model, parse_repo, get_repo_file_size, count_model_params, get_device, verify_commit_sha
 from ..template.backend_api import BackendAPI
-from ..template.validator_db import get_connection, get_cached_result, save_result, is_week_evaluated, mark_week_evaluated, cleanup_after_uid, get_unsynced_eval_details, mark_synced
+from ..template.validator_db import get_connection, get_cached_result, save_result, is_week_evaluated, mark_week_evaluated, cleanup_after_uid, get_unsynced_eval_details, mark_synced, get_quality_prompts, save_quality_prompts
 from ..template.dedup import check_against_saved, save_candidate, cleanup
 from ..template.leak import evaluate
 from ..template.quality import run_quality_duels
@@ -239,7 +240,7 @@ def qualify(leak_scores, config):
     return qualified, normalized_leak
 
 
-def run_stage2_and_score(api, leak_scores, submissions, submission_times, config, all_years, metagraph):
+def run_stage2_and_score(api, leak_scores, submissions, submission_times, config, all_years, metagraph, conn=None):
     """Run qualification, quality duels, and compute final scores."""
     qualified, normalized_leak = qualify(leak_scores, config)
     owner_uid = config.get("owner_uid", 0)
@@ -254,11 +255,20 @@ def run_stage2_and_score(api, leak_scores, submissions, submission_times, config
         final_scores[qualified[0][0]] = 1.0
     else:
         logger.info("=== Stage 2: Quality evaluation ===")
-        prompts = generate_prompts(config.get("eval_round", 0))
+        eval_round = config.get("eval_round", 0)
+        prompts = None
+        if conn:
+            prompts = get_quality_prompts(conn, eval_round)
+            if prompts:
+                logger.info(f"Loaded {len(prompts)} cached quality prompts")
+        if not prompts:
+            prompts = generate_prompts(eval_round)
+            if conn and prompts:
+                save_quality_prompts(conn, eval_round, prompts)
         if not prompts:
             raise RuntimeError("Failed to generate quality prompts")
         else:
-            win_rates = run_quality_duels(qualified, submissions, prompts, metagraph, all_years)
+            win_rates = asyncio.run(run_quality_duels(qualified, submissions, prompts, metagraph, all_years, eval_round, conn))
             leak_weight = config.get("leak_weight", 0.7)
             quality_weight = config.get("quality_weight", 0.3)
             final_scores = np.zeros(metagraph.n)
@@ -359,7 +369,7 @@ def run(args):
     config["owner_uid"] = owner_uid
     config["eval_round"] = eval_round
     final_scores, winner, uids, weights, results = run_stage2_and_score(
-        api, leak_scores, submissions, submission_times, config, ALL_YEARS, metagraph
+        api, leak_scores, submissions, submission_times, config, ALL_YEARS, metagraph, conn
     )
 
     api.submit_eval_results(eval_round, results.to_dict())

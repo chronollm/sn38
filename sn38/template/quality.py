@@ -19,6 +19,7 @@ from openai.types.chat import ChatCompletionSystemMessageParam, ChatCompletionUs
 
 from .model_loader import load_model
 from .model_store import download_model, parse_repo, get_device
+from .validator_db import get_quality_completions, save_quality_completions
 
 
 def generate_completion(model, device, prompt, max_new_tokens=100):
@@ -81,10 +82,7 @@ class Judge:
         return await asyncio.gather(*[self.judge_one(p, a, b) for p, a, b in tasks])
 
 
-judge = Judge()
-
-
-def duel(miner_completions, uid_a, uid_b, prompts):
+async def duel(judge, miner_completions, uid_a, uid_b, prompts):
     """Run a duel between two miners with A/B swap. Returns (wins_a, wins_b, total)."""
     tasks = []
     swap_flags = []
@@ -96,7 +94,7 @@ def duel(miner_completions, uid_a, uid_b, prompts):
         else:
             tasks.append((q["prompt"], miner_completions[uid_a][i], miner_completions[uid_b][i]))
 
-    results = asyncio.run(judge.judge_batch(tasks))
+    results = await judge.judge_batch(tasks)
 
     wins_a = 0
     wins_b = 0
@@ -139,7 +137,7 @@ def _generate_for_year(uid, submissions, eval_year, prompts, device):
         return [""] * len(prompts)
 
 
-def _run_round_robin(miner_completions, prompts, metagraph, uids):
+async def _run_round_robin(judge, miner_completions, prompts, metagraph, uids):
     """Run round-robin duels and return prompt-level win rates."""
     prompt_wins = {uid: 0 for uid in uids}
     total_prompts = {uid: 0 for uid in uids}
@@ -148,7 +146,7 @@ def _run_round_robin(miner_completions, prompts, metagraph, uids):
         for j in range(i + 1, len(uids)):
             uid_a, uid_b = uids[i], uids[j]
             logger.info(f"Duel: UID {uid_a} vs UID {uid_b}")
-            wins_a, wins_b, n_prompts = duel(miner_completions, uid_a, uid_b, prompts)
+            wins_a, wins_b, n_prompts = await duel(judge, miner_completions, uid_a, uid_b, prompts)
 
             prompt_wins[uid_a] += wins_a
             prompt_wins[uid_b] += wins_b
@@ -163,7 +161,7 @@ def _run_round_robin(miner_completions, prompts, metagraph, uids):
     return win_rates
 
 
-def run_quality_duels(qualified, submissions, prompts, metagraph, all_years):
+async def run_quality_duels(qualified, submissions, prompts, metagraph, all_years, eval_round=0, conn=None):
     """Round-robin 1v1 duels on two years: oldest + random.
 
     Returns:
@@ -177,14 +175,25 @@ def run_quality_duels(qualified, submissions, prompts, metagraph, all_years):
         eval_years.append(random.choice(other_years))
     logger.info(f"Quality eval years: {eval_years}")
 
+    judge = Judge()
     all_win_rates = []
     for year in eval_years:
         logger.info(f"=== Quality round: year {year} ===")
         completions = {}
         for uid in uids:
-            logger.info(f"UID {uid}: generating completions (year {year})")
-            completions[uid] = _generate_for_year(uid, submissions, year, prompts, device)
-        all_win_rates.append(_run_round_robin(completions, prompts, metagraph, uids))
+            cached = get_quality_completions(conn, eval_round, int(year), uid) if conn else None
+            if cached:
+                completions[uid] = cached
+                logger.info(f"UID {uid}: loaded from cache")
+            else:
+                logger.info(f"UID {uid}: generating completions (year {year})")
+                completions[uid] = _generate_for_year(uid, submissions, year, prompts, device)
+                if conn and any(completions[uid]):
+                    save_quality_completions(conn, eval_round, int(year), uid, completions[uid])
+        active = [uid for uid in uids if any(completions[uid])]
+        if len(active) < len(uids):
+            logger.warning(f"Skipped {len(uids) - len(active)} miners with inaccessible models")
+        all_win_rates.append(await _run_round_robin(judge, completions, prompts, metagraph, active))
 
     win_rates = sum(all_win_rates) / len(all_win_rates)
     for uid in uids:
