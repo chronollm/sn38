@@ -122,12 +122,8 @@ def _generate_for_year(uid, submissions, eval_year, prompts, device):
     try:
         path = direct_download_model(repo_id, revision=revision)
         model, _ = load_model(path, device)
-        completions = []
-        third = max(1, len(prompts) // 3)
-        for i, p in enumerate(prompts):
-            completions.append(generate_completion(model, device, p["prompt"]))
-            if (i + 1) % third == 0 or i + 1 == len(prompts):
-                logger.info(f"UID {uid}: generated {i+1}/{len(prompts)}")
+        completions = model.generate_batch([p["prompt"] for p in prompts], max_new_tokens=100)
+        logger.info(f"UID {uid}: generated {len(completions)}/{len(prompts)}")
         del model
         return completions
     except Exception as e:
