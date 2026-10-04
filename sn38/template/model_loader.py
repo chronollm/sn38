@@ -14,6 +14,22 @@ import torch.nn as nn
 
 import sn38.architectures  # noqa: F401 — registers custom architectures
 
+_ANSWER_SYSTEM_PROMPT = "Complete the sentence with a short answer. Do not repeat the prompt."
+
+_EVAL_BATCH_SIZE = None
+
+
+def eval_batch_size():
+    """Batch size for this process, from total VRAM. Computed once."""
+    global _EVAL_BATCH_SIZE
+    if _EVAL_BATCH_SIZE is None:
+        if not torch.cuda.is_available():
+            _EVAL_BATCH_SIZE = 8
+        else:
+            gb = torch.cuda.get_device_properties(0).total_memory / (1024 ** 3)
+            _EVAL_BATCH_SIZE = 64 if gb >= 120 else 32 if gb >= 60 else 16 if gb >= 20 else 8
+    return _EVAL_BATCH_SIZE
+
 
 class _HFWrapper(nn.Module):
     """Wraps a HuggingFace CausalLM with a unified interface."""
@@ -72,7 +88,7 @@ class _HFWrapper(nn.Module):
         if self.tokenizer.chat_template:
             inputs = self.tokenizer.apply_chat_template(
                 [
-                    {"role": "system", "content": "Complete the sentence with a short answer. Do not repeat the prompt."},
+                    {"role": "system", "content": _ANSWER_SYSTEM_PROMPT},
                     {"role": "user", "content": prompt},
                 ],
                 add_generation_prompt=True,
@@ -84,6 +100,49 @@ class _HFWrapper(nn.Module):
 
         out = self.hf_model.generate(inputs, max_new_tokens=max_new_tokens, pad_token_id=self.pad_token_id, **generate_kwargs)
         return self.decode(out[0, inputs.shape[1]:].tolist(), skip_special_tokens=True).strip()
+
+    def generate_batch(self, prompts, max_new_tokens=100, batch_size=None, **kwargs):
+        """Generate completions for many prompts, in chunks of batch_size."""
+        bs = batch_size or eval_batch_size()
+        out = []
+        for i in range(0, len(prompts), bs):
+            out += self._generate_chunk(prompts[i:i + bs], max_new_tokens, **kwargs)
+        return out
+
+    @torch.inference_mode()
+    def _generate_chunk(self, prompts, max_new_tokens, **kwargs):
+        """One batched forward pass over prompts."""
+        all_ids = []
+        for prompt in prompts:
+            if self.tokenizer.chat_template:
+                ids = self.tokenizer.apply_chat_template(
+                    [
+                        {"role": "system", "content": _ANSWER_SYSTEM_PROMPT},
+                        {"role": "user", "content": prompt},
+                    ],
+                    add_generation_prompt=True,
+                    tokenize=True,
+                )
+            else:
+                ids = self.encode(prompt, add_special_tokens=True)
+            all_ids.append(ids)
+
+        # left padding: a decoder-only model must generate from the last real token
+        max_len = max(len(ids) for ids in all_ids)
+        padded, attention_mask = [], []
+        for ids in all_ids:
+            pad_len = max_len - len(ids)
+            padded.append([self.pad_token_id] * pad_len + ids)
+            attention_mask.append([0] * pad_len + [1] * len(ids))
+
+        input_ids = torch.tensor(padded, device=self.hf_model.device)
+        attn_mask = torch.tensor(attention_mask, device=self.hf_model.device)
+        out = self.hf_model.generate(
+            input_ids, attention_mask=attn_mask,
+            max_new_tokens=max_new_tokens, pad_token_id=self.pad_token_id, **kwargs,
+        )
+        return [self.decode(out[i, input_ids.shape[1]:].tolist(), skip_special_tokens=True).strip()
+                for i in range(len(prompts))]
 
     def parameters(self):
         return self.hf_model.parameters()
