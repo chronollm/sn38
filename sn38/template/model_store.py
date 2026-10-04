@@ -138,7 +138,7 @@ def _wipe_xet_cache():
         logger.info(f"Wiped xet chunk cache at {xet_cache}")
 
 
-def download_model(
+def retrying_download_model(
     repo_id: str,
     local_dir: str,
     revision: Optional[str] = None,
@@ -201,6 +201,21 @@ def download_model(
             logger.warning(f"Download process exited with code {exit_code}, retrying (attempt {attempt + 1}/{max_retries})...")
 
     raise RuntimeError(f"Download of {repo_id} failed after {max_retries} attempts")
+
+
+def direct_download_model(repo_id: str, local_dir: Optional[str] = None, revision: Optional[str] = None) -> str:
+    """Download a model snapshot and return its path. The hub handles retries and resume.
+
+    Swap the body for retrying_download_model(...) if the hub stalls come back.
+    """
+    return snapshot_download(repo_id=repo_id, revision=revision, local_dir=local_dir)
+
+
+def delete_models(revisions):
+    """Delete cached model revisions by commit sha."""
+    from huggingface_hub import scan_cache_dir
+    if revisions:
+        scan_cache_dir().delete_revisions(*revisions).execute()
 
 
 def parse_repo(repo_str):

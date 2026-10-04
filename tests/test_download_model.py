@@ -2,7 +2,7 @@ from pathlib import Path
 from unittest.mock import patch
 
 import pytest
-from sn38.template.model_store import download_model
+from sn38.template.model_store import retrying_download_model as download_model
 
 # Small public repo, always accessible, safe to hit repeatedly
 VALID_REPO = "hf-internal-testing/tiny-random-bert"

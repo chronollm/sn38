@@ -16,7 +16,6 @@ import hashlib
 import logging
 import os
 import time
-import tempfile
 
 import numpy as np
 import torch
@@ -26,7 +25,7 @@ logger = logging.getLogger(__name__)
 
 from ..template.model_loader import load_model
 from ..template.constants import NETWORKS
-from ..template.model_store import download_model, parse_repo, get_repo_file_size, count_model_params, get_device, verify_commit_sha
+from ..template.model_store import direct_download_model, delete_models, parse_repo, get_repo_file_size, count_model_params, get_device, verify_commit_sha
 from ..template.backend_api import BackendAPI
 from ..template.validator_db import get_connection, get_cached_result, save_result, is_week_evaluated, mark_week_evaluated, cleanup_after_uid, get_unsynced_eval_details, mark_synced, get_quality_prompts, save_quality_prompts
 from ..template.dedup import check_against_saved, save_candidate, cleanup
@@ -93,9 +92,56 @@ def check_duplicate_weights(api, model_path, uid, snapshot_at):
     return True
 
 
+WORST_SCORE = 0.0
+
+def fail_year(api, conn, uid, year, repo_str, eval_round):
+    save_result(conn, uid, year, repo_str, False, WORST_SCORE, 0.0, 0.0, eval_round)
+    if api.submit_eval_detail(eval_round, uid, year, repo_str, False, WORST_SCORE, 0.0, 0.0):
+        mark_synced(conn, uid, year, repo_str, eval_round)
+
+
+def prefetch_models(api, submissions, config, all_years, conn, eval_round):
+    """Download every submission up front. A model that cannot be fetched is failed now."""
+    ok = {}
+    for uid, models in submissions.items():
+        for year in all_years:
+            repo_str = models.get(str(year))
+            if not repo_str:
+                continue
+            if get_cached_result(conn, uid, year, repo_str, eval_round) is not None:
+                continue
+            if repo_str not in ok:
+                repo_id, revision = parse_repo(repo_str)
+                try:
+                    if get_repo_file_size(repo_id, revision) > config["max_model_bytes"]:
+                        logger.warning(f"Prefetch: {repo_str} too large")
+                        ok[repo_str] = False
+                    else:
+                        direct_download_model(repo_id, revision=revision)
+                        ok[repo_str] = True
+                except Exception as error:
+                    logger.warning(f"Prefetch: {repo_str} unavailable — {type(error).__name__}")
+                    ok[repo_str] = False
+            if ok[repo_str]:
+                continue
+            fail_year(api, conn, uid, year, repo_str, eval_round)
+    logger.info(f"Prefetch: {sum(ok.values())}/{len(ok)} models available")
+
+
+def evict_unqualified(qualified, submissions):
+    """Drop cached models of miners that failed leak or did not make the cut."""
+    qualified_uids = {uid for uid, _ in qualified}
+    keep, drop = set(), set()
+    for uid, models in submissions.items():
+        for repo_str in models.values():
+            _, revision = parse_repo(repo_str)
+            if revision:
+                (keep if uid in qualified_uids else drop).add(revision)
+    delete_models(drop - keep)
+
+
 def run_stage1(api, submissions, submission_times, config, all_years, conn, benchmarks, eval_round):
     """Evaluate all miners for leak detection. Returns {uid: score}."""
-    WORST_SCORE = 0.0
     leak_scores = {}
 
     device = get_device()
@@ -135,80 +181,78 @@ def run_stage1(api, submissions, submission_times, config, all_years, conn, benc
                 logger.warning(f"UID {uid}: {repo_str} too large, skipping")
                 continue
 
-            def fail_year(y):
-                save_result(conn, uid, y, repo_str, False, WORST_SCORE, 0.0, 0.0, eval_round)
-                if api.submit_eval_detail(eval_round, uid, y, repo_str, False, WORST_SCORE, 0.0, 0.0):
-                    mark_synced(conn, uid, y, repo_str, eval_round)
-
             def fail_repo_years():
                 for y in years:
-                    fail_year(y)
+                    fail_year(api, conn, uid, y, repo_str, eval_round)
 
             try:
-                with tempfile.TemporaryDirectory() as tmpdir:
-                    logger.info(f"UID {uid}: downloading {repo_id}...")
-                    path = download_model(repo_id, tmpdir, revision=revision)
+                logger.info(f"UID {uid}: downloading {repo_id}...")
+                path = direct_download_model(repo_id, revision=revision)
 
-                    if not verify_commit_sha(repo_id, revision):
-                        logger.warning(f"UID {uid}: revision {revision} is not a real commit SHA, skipping")
-                        fail_repo_years()
-                        continue
+                if not verify_commit_sha(repo_id, revision):
+                    logger.warning(f"UID {uid}: revision {revision} is not a real commit SHA, skipping")
+                    fail_repo_years()
+                    continue
 
-                    if not check_duplicate_weights(api, path, uid, submission_times.get(uid, "")):
-                        fail_repo_years()
-                        continue
+                if not check_duplicate_weights(api, path, uid, submission_times.get(uid, "")):
+                    fail_repo_years()
+                    continue
 
-                    model, tokenizer = load_model(path, device)
-                    param_count = count_model_params(model)
-                    logger.info(f"UID {uid}: loaded {param_count / 1e6:.0f}M params")
+                model, tokenizer = load_model(path, device)
+                param_count = count_model_params(model)
+                logger.info(f"UID {uid}: loaded {param_count / 1e6:.0f}M params")
 
-                    if param_count > config["max_parameters"]:
-                        logger.warning(f"UID {uid}: {param_count / 1e9:.1f}B > limit, skipping")
-                        del model
-                        _free_gpu()
-                        fail_repo_years()
-                        continue
-
-                    state = model.inner_state_dict()
-
-                    passed_dedup, matched_uid, reason, logits = check_against_saved(model, state, device, dedup_probes)
-                    if not passed_dedup:
-                        logger.warning(f"UID {uid}: duplicate of UID {matched_uid} ({reason}), skipping")
-                        del state, logits, model
-                        _free_gpu()
-                        fail_repo_years()
-                        continue
-
-                    save_candidate(state, uid, logits)
-                    del state, logits
-
-                    eval_start = time.time()
-                    for year in years:
-                        if time.time() - eval_start > config["max_eval_seconds"]:
-                            logger.warning(f"UID {uid}: timeout, remaining years skipped")
-                            break
-
-                        bench = benchmarks[year]
-                        logger.info(f"UID {uid}: evaluating year {year}...")
-                        failed_leak, median_unknown = evaluate(model, device, bench["unknown"])
-                        passed_known, median_known = evaluate(model, device, bench["known"])
-                        passed = not failed_leak and passed_known
-
-                        if not passed:
-                            score = WORST_SCORE
-                        else:
-                            score = median_unknown - median_known
-                        year_scores[year] = score
-                        save_result(conn, uid, year, repo_str, passed, score, median_unknown, median_known, eval_round)
-                        if api.submit_eval_detail(eval_round, uid, year, repo_str, passed, score, median_unknown, median_known):
-                            mark_synced(conn, uid, year, repo_str, eval_round)
-                        logger.info(f"UID {uid}: year {year} {'PASSED' if passed else 'FAILED'}")
-                        logger.debug(f"UID {uid} year {year}: unknown={median_unknown:.4f} known={median_known:.4f} score={score:.4f}")
-
-                    elapsed = time.time() - eval_start
-                    logger.info(f"UID {uid}: done in {elapsed:.0f}s")
+                if param_count > config["max_parameters"]:
+                    logger.warning(f"UID {uid}: {param_count / 1e9:.1f}B > limit, skipping")
                     del model
                     _free_gpu()
+                    fail_repo_years()
+                    continue
+
+                state = model.inner_state_dict()
+
+                passed_dedup, matched_uid, reason, logits = check_against_saved(model, state, device, dedup_probes)
+                if not passed_dedup:
+                    logger.warning(f"UID {uid}: duplicate of UID {matched_uid} ({reason}), skipping")
+                    del state, logits, model
+                    _free_gpu()
+                    fail_repo_years()
+                    continue
+
+                save_candidate(state, uid, logits)
+                del state, logits
+
+                eval_start = time.time()
+                any_passed = False
+                for year in years:
+                    if time.time() - eval_start > config["max_eval_seconds"]:
+                        logger.warning(f"UID {uid}: timeout, remaining years skipped")
+                        break
+
+                    bench = benchmarks[year]
+                    logger.info(f"UID {uid}: evaluating year {year}...")
+                    failed_leak, median_unknown = evaluate(model, device, bench["unknown"])
+                    passed_known, median_known = evaluate(model, device, bench["known"])
+                    passed = not failed_leak and passed_known
+
+                    if not passed:
+                        score = WORST_SCORE
+                    else:
+                        score = median_unknown - median_known
+                        any_passed = True
+                    year_scores[year] = score
+                    save_result(conn, uid, year, repo_str, passed, score, median_unknown, median_known, eval_round)
+                    if api.submit_eval_detail(eval_round, uid, year, repo_str, passed, score, median_unknown, median_known):
+                        mark_synced(conn, uid, year, repo_str, eval_round)
+                    logger.info(f"UID {uid}: year {year} {'PASSED' if passed else 'FAILED'}")
+                    logger.debug(f"UID {uid} year {year}: unknown={median_unknown:.4f} known={median_known:.4f} score={score:.4f}")
+
+                elapsed = time.time() - eval_start
+                logger.info(f"UID {uid}: done in {elapsed:.0f}s")
+                del model
+                _free_gpu()
+                if not any_passed:
+                    delete_models([revision])
 
             except RuntimeError:
                 raise
@@ -243,6 +287,7 @@ def qualify(leak_scores, config):
 def run_stage2_and_score(api, leak_scores, submissions, submission_times, config, all_years, metagraph, conn=None):
     """Run qualification, quality duels, and compute final scores."""
     qualified, normalized_leak = qualify(leak_scores, config)
+    evict_unqualified(qualified, submissions)
     owner_uid = config.get("owner_uid", 0)
     if not qualified:
         results = RoundResults.no_qualified(leak_scores, owner_uid)
@@ -349,6 +394,12 @@ def run(args):
         submissions = {uid: m for uid, m in submissions.items() if uid in test_uids}
 
     logger.info(f"Round {eval_round}: {len(submissions)} miners")
+
+    # =========================================
+    # Prefetch models (unavailable ones fail the round here => this prevents miners
+    # from making their model private once qualified
+    # =========================================
+    prefetch_models(api, submissions, config, ALL_YEARS, conn, eval_round)
 
     # =========================================
     # Preload benchmarks (fail fast if backend is down)
