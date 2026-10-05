@@ -123,6 +123,11 @@ class _HFWrapper(nn.Module):
                     add_generation_prompt=True,
                     tokenize=True,
                 )
+                if not isinstance(ids, (list, tuple)):   # BatchEncoding on some versions
+                    ids = ids["input_ids"]
+                if ids and isinstance(ids[0], (list, tuple)):
+                    ids = ids[0]
+                ids = list(ids)
             else:
                 ids = self.encode(prompt, add_special_tokens=True)
             all_ids.append(ids)
