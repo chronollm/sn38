@@ -25,7 +25,7 @@ logger = logging.getLogger(__name__)
 
 from ..template.model_loader import load_model
 from ..template.constants import NETWORKS
-from ..template.model_store import direct_download_model, delete_models, parse_repo, get_repo_file_size, count_model_params, get_device, verify_commit_sha
+from ..template.model_store import direct_download_model, delete_models, set_round_cache, parse_repo, get_repo_file_size, count_model_params, get_device, verify_commit_sha
 from ..template.backend_api import BackendAPI
 from ..template.validator_db import get_connection, get_cached_result, save_result, is_week_evaluated, mark_week_evaluated, cleanup_after_uid, get_unsynced_eval_details, mark_synced, get_quality_prompts, save_quality_prompts
 from ..template.dedup import check_against_saved, save_candidate, cleanup
@@ -103,12 +103,14 @@ def fail_year(api, conn, uid, year, repo_str, eval_round):
 def prefetch_models(api, submissions, config, all_years, conn, eval_round):
     """Download every submission up front. A model that cannot be fetched is failed now."""
     ok = {}
+    total = len({r for models in submissions.values() for r in models.values() if r})
     for uid, models in submissions.items():
         for year in all_years:
             repo_str = models.get(str(year))
             if not repo_str:
                 continue
             if get_cached_result(conn, uid, year, repo_str, eval_round) is not None:
+                logger.info(f"Prefetch: {repo_str} year {year} result cached")
                 continue
             if repo_str not in ok:
                 repo_id, revision = parse_repo(repo_str)
@@ -117,6 +119,7 @@ def prefetch_models(api, submissions, config, all_years, conn, eval_round):
                         logger.warning(f"Prefetch: {repo_str} too large")
                         ok[repo_str] = False
                     else:
+                        logger.info(f"Prefetch {len(ok) + 1}/{total} ({(len(ok) + 1) / total:.0%}): {repo_str}")
                         direct_download_model(repo_id, revision=revision)
                         ok[repo_str] = True
                 except Exception as error:
@@ -125,7 +128,8 @@ def prefetch_models(api, submissions, config, all_years, conn, eval_round):
             if ok[repo_str]:
                 continue
             fail_year(api, conn, uid, year, repo_str, eval_round)
-    logger.info(f"Prefetch: {sum(ok.values())}/{len(ok)} models available")
+    fetched = sum(ok.values())
+    logger.info(f"Prefetch: {fetched} fetched, {len(ok) - fetched} unavailable, {total - len(ok)} cached of {total}")
 
 
 def evict_unqualified(qualified, submissions):
@@ -364,6 +368,7 @@ def run(args):
 
     config = api.get_config()
     eval_round = api.get_eval_round()
+    set_round_cache(eval_round)
     ALL_YEARS = api.get_years(eval_round)
     NUM_YEARS = len(ALL_YEARS)
     logger.info(f"Config: {config}")
