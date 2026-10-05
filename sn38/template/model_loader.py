@@ -169,4 +169,7 @@ def load_model(model_path: str, device: torch.device) -> tuple:
     )
     hf_model.to(device).eval()
     tokenizer = AutoTokenizer.from_pretrained(model_path)
+    rows = hf_model.get_input_embeddings().weight.shape[0]
+    if len(tokenizer) > rows:
+        raise ValueError(f"tokenizer has {len(tokenizer)} tokens but embeddings only {rows}")
     return _HFWrapper(hf_model, tokenizer), tokenizer
