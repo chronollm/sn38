@@ -11,7 +11,6 @@ from typing import Optional
 import torch
 
 logger = logging.getLogger(__name__)
-from huggingface_hub import HfApi, hf_hub_download, snapshot_download
 
 from .constants import ALL_YEARS
 
@@ -23,6 +22,7 @@ SHA_PATTERN = re.compile(r"^[^/]+/[^@]+@[0-9a-f]{40}$")
 
 def verify_commit_sha(repo_id: str, revision: str) -> bool:
     """Verify that a revision resolves to a real commit SHA, not a branch with a SHA-like name."""
+    from huggingface_hub import HfApi
     info = HfApi().repo_info(repo_id, revision=revision)
     return info.sha == revision
 
@@ -43,6 +43,7 @@ def validate_models_json(models: dict) -> list[int]:
 
 def upload_models_json(models: dict, dataset_repo: str, token: Optional[str] = None):
     """Upload models.json to a HuggingFace dataset repo."""
+    from huggingface_hub import HfApi
     api = HfApi(token=token)
     api.create_repo(dataset_repo, repo_type="dataset", exist_ok=True)
     api.upload_file(
@@ -56,6 +57,7 @@ def upload_models_json(models: dict, dataset_repo: str, token: Optional[str] = N
 
 def fetch_models_json(dataset_repo: str) -> dict:
     """Fetch models.json from a HuggingFace dataset repo."""
+    from huggingface_hub import hf_hub_download
     path = hf_hub_download(repo_id=dataset_repo, filename="models.json", repo_type="dataset")
     with open(path) as f:
         return json.load(f)
@@ -83,6 +85,7 @@ def _do_download_model(
     if disable_xet:
         os.environ["HF_HUB_DISABLE_XET"] = "1"
 
+    from huggingface_hub import snapshot_download
     from huggingface_hub.errors import GatedRepoError, HfHubHTTPError, RepositoryNotFoundError, RevisionNotFoundError
     try:
         snapshot_download(repo_id=repo_id, revision=revision, local_dir=local_dir)
@@ -138,7 +141,7 @@ def _wipe_xet_cache():
         logger.info(f"Wiped xet chunk cache at {xet_cache}")
 
 
-def download_model(
+def retrying_download_model(
     repo_id: str,
     local_dir: str,
     revision: Optional[str] = None,
@@ -203,6 +206,48 @@ def download_model(
     raise RuntimeError(f"Download of {repo_id} failed after {max_retries} attempts")
 
 
+def direct_download_model(repo_id: str, local_dir: Optional[str] = None, revision: Optional[str] = None) -> str:
+    """Download a model snapshot and return its path. The hub handles retries and resume.
+
+    Swap the body for retrying_download_model(...) if the hub stalls come back.
+    """
+    from huggingface_hub import snapshot_download
+    return snapshot_download(repo_id=repo_id, revision=revision, local_dir=local_dir)
+
+
+_HF_BASE = os.environ.get("HF_HOME", "/app/data/hf")
+
+
+def set_round_cache(eval_round):
+    """Point the HF caches at this round's dir and drop every other round.
+
+    Must run before the first model_store call: huggingface_hub derives every path
+    from HF_HOME at import, and that import is deferred until then.
+    """
+    import shutil
+    current = f"round{eval_round}"
+    removed = []
+    for name in (os.listdir(_HF_BASE) if os.path.isdir(_HF_BASE) else []):
+        if name != current:
+            shutil.rmtree(os.path.join(_HF_BASE, name), ignore_errors=True)
+            removed.append(name)
+    home = os.path.join(_HF_BASE, current)
+    os.environ["HF_HOME"] = home
+    if removed:
+        logger.info(f"Cleared old cache: {', '.join(sorted(removed))}")
+    logger.info(f"HF cache: {home}")
+    for root, dirs, files in os.walk(home):
+        for name in sorted(dirs + files):
+            logger.debug(f"  {os.path.relpath(os.path.join(root, name), home)}")
+
+
+def delete_models(revisions):
+    """Delete cached model revisions by commit sha."""
+    from huggingface_hub import scan_cache_dir
+    if revisions:
+        scan_cache_dir().delete_revisions(*revisions).execute()
+
+
 def parse_repo(repo_str):
     """Parse 'owner/repo@revision' → (repo_id, revision). No @ means main."""
     if "@" in repo_str:
@@ -213,6 +258,7 @@ def parse_repo(repo_str):
 
 def get_repo_file_size(repo_id, revision=None):
     try:
+        from huggingface_hub import HfApi
         info = HfApi().model_info(repo_id, revision=revision, files_metadata=True)
         return sum(s.size for s in (info.siblings or []) if s.rfilename.endswith((".safetensors", ".bin")))
     except Exception:

@@ -21,7 +21,7 @@ from ..template.backend_api import BackendAPI
 from ..template.constants import NETWORKS
 from ..template.model_loader import load_model
 from ..template.leak import evaluate
-from ..template.model_store import download_model, parse_repo, get_device
+from ..template.model_store import retrying_download_model, parse_repo, get_device
 
 logger = logging.getLogger(__name__)
 
@@ -82,7 +82,7 @@ def run(args):
         with tempfile.TemporaryDirectory() as tmpdir:
             repo_id, revision = parse_repo(args.repo)
             logger.info(f"[4/6] Downloading {repo_id}...")
-            path = download_model(repo_id, tmpdir, revision=revision)
+            path = retrying_download_model(repo_id, tmpdir, revision=revision)
             logger.info(f"[4/6] Download complete")
 
             logger.info("[5/6] Loading model...")

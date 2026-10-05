@@ -8,7 +8,6 @@ import asyncio
 import logging
 import os
 import random
-import tempfile
 
 import numpy as np
 import torch
@@ -18,7 +17,7 @@ from openai import AsyncOpenAI
 from openai.types.chat import ChatCompletionSystemMessageParam, ChatCompletionUserMessageParam
 
 from .model_loader import load_model
-from .model_store import download_model, parse_repo, get_device
+from .model_store import direct_download_model, parse_repo, get_device
 from .validator_db import get_quality_completions, save_quality_completions
 
 
@@ -121,17 +120,12 @@ def _generate_for_year(uid, submissions, eval_year, prompts, device):
 
     repo_id, revision = parse_repo(repo_str)
     try:
-        with tempfile.TemporaryDirectory() as tmpdir:
-            path = download_model(repo_id, tmpdir, revision=revision)
-            model, _ = load_model(path, device)
-            completions = []
-            third = max(1, len(prompts) // 3)
-            for i, p in enumerate(prompts):
-                completions.append(generate_completion(model, device, p["prompt"]))
-                if (i + 1) % third == 0 or i + 1 == len(prompts):
-                    logger.info(f"UID {uid}: generated {i+1}/{len(prompts)}")
-            del model
-            return completions
+        path = direct_download_model(repo_id, revision=revision)
+        model, _ = load_model(path, device)
+        completions = model.generate_batch([p["prompt"] for p in prompts], max_new_tokens=100)
+        logger.info(f"UID {uid}: generated {len(completions)}/{len(prompts)}")
+        del model
+        return completions
     except Exception as e:
         logger.error(f"UID {uid}: completion generation FAILED — {type(e).__name__}")
         return [""] * len(prompts)

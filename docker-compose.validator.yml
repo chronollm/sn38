@@ -1,7 +1,7 @@
 version: '3.8'
 services:
   validator:
-    image: chronollm/sn38-validator@sha256:9107b322c81e46eb8f3076d15dee861d738d9cba1888f226b5c2988b9d2afaab
+    image: chronollm/sn38-validator@sha256:2acf7a81bd9f03336231b7da8af25669c0fe6dbd71917059959b2b695d134ea5
 
     restart: "on-failure"
     volumes:
@@ -11,6 +11,9 @@ services:
       - NETUID=38
       - SUBTENSOR_NETWORK=finney
       - BACKEND_URL=https://api.chronollm.com
+      - DATA_DIR=${DATA_DIR:-/app/data}
+      # base for the per-round hub + xet caches, on the persistent volume
+      - HF_HOME=${DATA_DIR:-/app/data}/hf
       # This secret is encrypted client-side by Phala CLI before transmission
       - WALLET_NAME=validator
       - HOTKEY_FILE_CONTENT=${HOTKEY_FILE_CONTENT}
