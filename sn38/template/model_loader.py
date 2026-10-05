@@ -12,7 +12,7 @@ Supported:
 import torch
 import torch.nn as nn
 
-import sn38.architectures  # noqa: F401 — registers custom architectures
+import sn38.architectures  # registration is lazy; see load_model
 
 _ANSWER_SYSTEM_PROMPT = "Complete the sentence with a short answer. Do not repeat the prompt."
 
@@ -163,6 +163,7 @@ def load_model(model_path: str, device: torch.device) -> tuple:
     eos_token_ids, pad_token_id. No need to handle tokenizer differences externally.
     """
     from transformers import AutoModelForCausalLM, AutoTokenizer
+    sn38.architectures.register_for(model_path)
     hf_model = AutoModelForCausalLM.from_pretrained(
         model_path, dtype=torch.bfloat16, trust_remote_code=False,
     )
