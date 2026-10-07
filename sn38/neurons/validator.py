@@ -281,9 +281,11 @@ def qualify(leak_scores, config):
 
     logger.info(f"Qualified: {len(qualified)} miners — UIDs: {[uid for uid, _ in qualified]}")
 
-    eval_threshold = config.get("min_eval_score", -3.0)
-    eval_best = config.get("leak_epsilon", -6.0)
-    normalized_leak = {uid: max(0.0, min(1.0, (eval_threshold - score) / (eval_threshold - eval_best))) for uid, score in qualified}
+    # Normalisation window, independent of the pass/fail gate above: moving it
+    # changes how leak is scored, never who qualifies.
+    leak_floor = config.get("leak_floor", -11.0)
+    leak_ceiling = config.get("leak_ceiling", -25.0)
+    normalized_leak = {uid: max(0.0, min(1.0, (leak_floor - score) / (leak_floor - leak_ceiling))) for uid, score in qualified}
 
     return qualified, normalized_leak
 
@@ -318,8 +320,8 @@ def run_stage2_and_score(api, leak_scores, submissions, submission_times, config
             raise RuntimeError("Failed to generate quality prompts")
         else:
             win_rates = asyncio.run(run_quality_duels(qualified, submissions, prompts, metagraph, all_years, eval_round, conn))
-            leak_weight = config.get("leak_weight", 0.7)
-            quality_weight = config.get("quality_weight", 0.3)
+            leak_weight = config.get("leak_weight", 0.3)
+            quality_weight = config.get("quality_weight", 0.7)
             final_scores = np.zeros(metagraph.n)
             for uid, _ in qualified:
                 final_scores[uid] = leak_weight * normalized_leak[uid] + quality_weight * win_rates[uid]
