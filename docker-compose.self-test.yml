@@ -1,7 +1,7 @@
 version: '3.8'
 services:
   self-test:
-    image: chronollm/sn38-validator@sha256:12e9b1637eed49c6758fc780af3fedfbab4781a768f8f78dbc6c913b2ed76737
+    image: chronollm/sn38-validator@sha256:197013dcd40537c689c20c3ac9a256f4021da8ad699eba63ea83c135418ea43e
 
     restart: "on-failure"
     ports:
