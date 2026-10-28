@@ -87,14 +87,19 @@ def _check_weight_cosine(state_a, state_b, threshold=COSINE_THRESHOLD):
 
 
 def _to_input_ids(model, data):
+    """Pad a batch of probes to a rectangle. Returns (input_ids, real lengths).
+
+    The lengths matter: the padding is filler, and reading the logits at the
+    padded end would measure the pad token rather than the model.
+    """
     if isinstance(data[0], list):
-        return torch.tensor(data)
-    all_ids = []
-    for text in data:
-        all_ids.append(model.encode(text))
+        all_ids = [list(ids) for ids in data]
+    else:
+        all_ids = [model.encode(text) for text in data]
     max_len = max(len(ids) for ids in all_ids)
     pad_id = model.pad_token_id
-    return torch.tensor([ids + [pad_id] * (max_len - len(ids)) for ids in all_ids])
+    padded = torch.tensor([ids + [pad_id] * (max_len - len(ids)) for ids in all_ids])
+    return padded, torch.tensor([len(ids) for ids in all_ids])
 
 
 
@@ -142,8 +147,10 @@ def _compute_kl_logits(model, device, probes):
     logits = {}
     with torch.no_grad():
         for key, data in probes.items():
-            input_ids = _to_input_ids(model, data).to(device)
-            logits[key] = model(input_ids)[:, -1, :].float()
+            input_ids, lengths = _to_input_ids(model, data)
+            out = model(input_ids.to(device))
+            rows = torch.arange(out.shape[0], device=out.device)
+            logits[key] = out[rows, (lengths - 1).to(out.device), :].float()
     h = _vocab_hashes(model)
     if h is not None:
         logits[VOCAB_KEY] = h
