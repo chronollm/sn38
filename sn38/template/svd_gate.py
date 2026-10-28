@@ -1,5 +1,7 @@
 """Weight and functional comparison functions for dedup."""
 
+import hashlib
+
 import torch
 import torch.nn.functional as F
 
@@ -7,6 +9,7 @@ SVD_THRESHOLD = 0.001
 SVD_TOP_RATIO = 0.25
 COSINE_THRESHOLD = 0.95
 KL_THRESHOLD = 1.0
+MIN_SHARED_TOKENS = 1024
 
 
 def svd_spectra(state_dict):
@@ -84,23 +87,73 @@ def _check_weight_cosine(state_a, state_b, threshold=COSINE_THRESHOLD):
 
 
 def _to_input_ids(model, data):
+    """Pad a batch of probes to a rectangle. Returns (input_ids, real lengths).
+
+    The lengths matter: the padding is filler, and reading the logits at the
+    padded end would measure the pad token rather than the model.
+    """
     if isinstance(data[0], list):
-        return torch.tensor(data)
-    all_ids = []
-    for text in data:
-        all_ids.append(model.encode(text))
+        all_ids = [list(ids) for ids in data]
+    else:
+        all_ids = [model.encode(text) for text in data]
     max_len = max(len(ids) for ids in all_ids)
     pad_id = model.pad_token_id
-    return torch.tensor([ids + [pad_id] * (max_len - len(ids)) for ids in all_ids])
+    padded = torch.tensor([ids + [pad_id] * (max_len - len(ids)) for ids in all_ids])
+    return padded, torch.tensor([len(ids) for ids in all_ids])
+
+
+
+# Key under which the vocabulary fingerprint travels with the logits. It is a
+# tensor so the saved .pt stays loadable with weights_only=True.
+VOCAB_KEY = "__vocab_hash__"
+
+
+def _vocab_hashes(model):
+    """int64 hash of each token's string, indexed by token id, or None."""
+    tok = getattr(model, "tokenizer", None)
+    get_vocab = getattr(tok, "get_vocab", None)
+    if get_vocab is None:
+        return None
+    vocab = get_vocab()
+    if not vocab:
+        return None
+    out = torch.zeros(max(vocab.values()) + 1, dtype=torch.int64)
+    for s, i in vocab.items():
+        d = hashlib.blake2b(s.encode("utf-8", "surrogatepass"), digest_size=8).digest()
+        out[i] = int.from_bytes(d, "big", signed=True)
+    return out
+
+
+def _align_columns(ha, hb):
+    """Column indices (ia, ib) selecting the tokens the two vocabularies share."""
+    pos_b = {}
+    for i, h in enumerate(hb.tolist()):
+        pos_b.setdefault(h, i)
+    ia, ib = [], []
+    for i, h in enumerate(ha.tolist()):
+        j = pos_b.get(h)
+        if j is not None:
+            ia.append(i)
+            ib.append(j)
+    return ia, ib
 
 
 def _compute_kl_logits(model, device, probes):
-    """Compute logits fingerprints from backend probes. Returns dict of logits."""
+    """Compute logits fingerprints from backend probes. Returns dict of logits.
+
+    Also carries the vocabulary fingerprint so a later comparison can line the
+    columns up by token string rather than trusting the token ids to agree.
+    """
     logits = {}
     with torch.no_grad():
         for key, data in probes.items():
-            input_ids = _to_input_ids(model, data).to(device)
-            logits[key] = model(input_ids)[:, -1, :].float()
+            input_ids, lengths = _to_input_ids(model, data)
+            out = model(input_ids.to(device))
+            rows = torch.arange(out.shape[0], device=out.device)
+            logits[key] = out[rows, (lengths - 1).to(out.device), :].float()
+    h = _vocab_hashes(model)
+    if h is not None:
+        logits[VOCAB_KEY] = h
     return logits
 
 
@@ -110,15 +163,38 @@ def _compare_kl_logits(logits_dict_a, logits_dict_b, threshold=KL_THRESHOLD):
     Uses max of medians across probe types.
     Returns (passed, max_median_kl).
     """
+    ha = logits_dict_a.get(VOCAB_KEY)
+    hb = logits_dict_b.get(VOCAB_KEY)
+    if ha is not None:
+        ha = ha.cpu()
+    if hb is not None:
+        hb = hb.cpu()
+    cols = None
+    if ha is not None and hb is not None and not (
+            ha.shape == hb.shape and bool(torch.equal(ha, hb))):
+        # different token ids or vocabulary size: reindex both onto the tokens
+        # they share, by string. Identical tokenizers skip this entirely.
+        ia, ib = _align_columns(ha, hb)
+        if len(ia) < MIN_SHARED_TOKENS:
+            # too little overlap to judge -- do not hand out a free pass
+            return False, 0.0
+        cols = (torch.tensor(ia), torch.tensor(ib))
+
     medians = []
     for name in logits_dict_a:
-        if name not in logits_dict_b:
+        if name == VOCAB_KEY or name not in logits_dict_b:
             continue
         la = logits_dict_a[name]
         lb = logits_dict_b[name].to(la.device)
 
-        if la.shape[-1] != lb.shape[-1]:
-            return True, float("inf")
+        if cols is not None:
+            la = la.index_select(-1, cols[0].to(la.device))
+            lb = lb.index_select(-1, cols[1].to(lb.device))
+        elif la.shape[-1] != lb.shape[-1]:
+            # no fingerprint (checkpoint written before this change): fall back
+            # to the shared prefix rather than passing, as the old code did.
+            n = min(la.shape[-1], lb.shape[-1])
+            la, lb = la[..., :n], lb[..., :n]
 
         log_probs_a = F.log_softmax(la, dim=-1)
         log_probs_b = F.log_softmax(lb, dim=-1)
