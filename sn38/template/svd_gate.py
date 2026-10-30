@@ -175,6 +175,11 @@ def _compare_kl_logits(logits_dict_a, logits_dict_b, threshold=KL_THRESHOLD):
         # different token ids or vocabulary size: reindex both onto the tokens
         # they share, by string. Identical tokenizers skip this entirely.
         ia, ib = _align_columns(ha, hb)
+        # a vocabulary may number a token past the embedding matrix: drop those
+        # columns rather than indexing out of bounds
+        wa = min((v.shape[-1] for k, v in logits_dict_a.items() if k != VOCAB_KEY), default=0)
+        wb = min((v.shape[-1] for k, v in logits_dict_b.items() if k != VOCAB_KEY), default=0)
+        ia, ib = [i for i, j in zip(ia, ib) if i < wa and j < wb], [j for i, j in zip(ia, ib) if i < wa and j < wb]
         if len(ia) < MIN_SHARED_TOKENS:
             # too little overlap to judge -- do not hand out a free pass
             return False, 0.0
