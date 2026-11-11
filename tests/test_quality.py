@@ -5,6 +5,7 @@ Usage:
     python -m pytest tests/test_quality.py -v
 """
 
+import asyncio
 import os
 from unittest.mock import MagicMock, patch
 
@@ -54,7 +55,7 @@ def _make_metagraph(n=256):
 def round8_win_rates():
     duel_iter = iter(ROUND8_DUELS)
 
-    def fake_duel(miner_completions, uid_a, uid_b, prompts):
+    def fake_duel(judge, miner_completions, uid_a, uid_b, prompts):
         expected = next(duel_iter)
         assert (uid_a, uid_b) == (expected[0], expected[2])
         return expected[1], expected[3], N_PROMPTS
@@ -63,7 +64,7 @@ def round8_win_rates():
     mg = _make_metagraph()
 
     with patch("sn38.template.quality.duel", side_effect=fake_duel):
-        return _run_round_robin(completions, [{"prompt": "p"}] * N_PROMPTS, mg, UIDS)
+        return asyncio.run(_run_round_robin(None, completions, [{"prompt": "p"}] * N_PROMPTS, mg, UIDS))
 
 
 # ─── Per-prompt ranking ───
@@ -121,7 +122,7 @@ ROUND9_DUELS = [
 def round9_win_rates():
     duel_iter = iter(ROUND9_DUELS)
 
-    def fake_duel(miner_completions, uid_a, uid_b, prompts):
+    def fake_duel(judge, miner_completions, uid_a, uid_b, prompts):
         expected = next(duel_iter)
         assert (uid_a, uid_b) == (expected[0], expected[2])
         return expected[1], expected[3], ROUND9_N_PROMPTS
@@ -130,7 +131,7 @@ def round9_win_rates():
     mg = _make_metagraph()
 
     with patch("sn38.template.quality.duel", side_effect=fake_duel):
-        return _run_round_robin(completions, [{"prompt": "p"}] * ROUND9_N_PROMPTS, mg, ROUND9_UIDS)
+        return asyncio.run(_run_round_robin(None, completions, [{"prompt": "p"}] * ROUND9_N_PROMPTS, mg, ROUND9_UIDS))
 
 
 def test_round9_loser_not_zero(round9_win_rates):
@@ -151,7 +152,7 @@ def test_round9_ranking(round9_win_rates):
 def test_two_miners_loser_gets_credit(mock_duel):
     mock_duel.return_value = (60, 40, 100)
     mg = _make_metagraph()
-    wr = _run_round_robin({1: ["c"] * 100, 2: ["c"] * 100}, [{"prompt": "p"}] * 100, mg, [1, 2])
+    wr = asyncio.run(_run_round_robin(None, {1: ["c"] * 100, 2: ["c"] * 100}, [{"prompt": "p"}] * 100, mg, [1, 2]))
     assert wr[1] == pytest.approx(0.6)
     assert wr[2] == pytest.approx(0.4)
 
@@ -160,6 +161,6 @@ def test_two_miners_loser_gets_credit(mock_duel):
 def test_all_ties(mock_duel):
     mock_duel.return_value = (0, 0, 100)
     mg = _make_metagraph()
-    wr = _run_round_robin({1: ["c"] * 100, 2: ["c"] * 100}, [{"prompt": "p"}] * 100, mg, [1, 2])
+    wr = asyncio.run(_run_round_robin(None, {1: ["c"] * 100, 2: ["c"] * 100}, [{"prompt": "p"}] * 100, mg, [1, 2]))
     assert wr[1] == 0.0
     assert wr[2] == 0.0

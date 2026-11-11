@@ -16,6 +16,7 @@ from sn38.template.model_store import validate_models_json
 from sn38.neurons.validator import check_duplicate_weights, run_stage1
 
 VALID_SHA = "a1b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6e7f8a9b0"
+BENCHMARKS = {2013: {"unknown": {}, "known": {}}}
 
 
 # ─── Fixtures ───
@@ -39,20 +40,25 @@ def patched_stage1(monkeypatch, tmp_path):
         d.mkdir(exist_ok=True)
         (d / "model.safetensors").write_bytes(f"weights_{uid}".encode())
 
-    def fake_download(repo_id, local_dir, revision=None):
+    def fake_download(repo_id, revision=None):
         uid = int(repo_id.split("-")[1])
         return str(tmp_path / str(uid))
 
     eval_calls = iter([(False, -8.0), (True, -3.0)] * 100)
 
-    monkeypatch.setattr("sn38.neurons.validator.download_model", fake_download)
-    monkeypatch.setattr("sn38.neurons.validator.load_model", lambda p, d: MagicMock())
+    monkeypatch.setattr("sn38.neurons.validator.direct_download_model", fake_download)
+    monkeypatch.setattr("sn38.neurons.validator.load_model", lambda p, d: (MagicMock(), MagicMock()))
     monkeypatch.setattr("sn38.neurons.validator.count_model_params", lambda m: 1_000_000)
     monkeypatch.setattr("sn38.neurons.validator.get_repo_file_size", lambda r, v: 1000)
     monkeypatch.setattr("sn38.neurons.validator.get_device", lambda: "cpu")
     monkeypatch.setattr("sn38.neurons.validator.evaluate", lambda m, d, b: next(eval_calls))
-    monkeypatch.setattr("sn38.neurons.validator.get_cached_result", lambda c, u, y, r: None)
+    monkeypatch.setattr("sn38.neurons.validator.get_cached_result", lambda c, u, y, r, e: None)
     monkeypatch.setattr("sn38.neurons.validator.save_result", lambda *a: None)
+    monkeypatch.setattr("sn38.neurons.validator.mark_synced", lambda *a: None)
+    monkeypatch.setattr("sn38.neurons.validator.get_unsynced_eval_details", lambda c: [])
+    monkeypatch.setattr("sn38.neurons.validator.check_against_saved", lambda m, s, d, p: (True, None, "", None))
+    monkeypatch.setattr("sn38.neurons.validator.save_candidate", lambda *a: None)
+    monkeypatch.setattr("sn38.neurons.validator.delete_models", lambda revisions: None)
     monkeypatch.setattr("sn38.neurons.validator.verify_commit_sha", lambda r, v: True)
 
 
@@ -109,7 +115,7 @@ def test_stage1_evaluates_oldest_first(patched_stage1, monkeypatch):
     submission_times = {1: "2026-07-01T12:00:00", 2: "2026-07-01T08:00:00"}
     config = {"max_model_bytes": 10**10, "max_parameters": 10**10, "max_eval_seconds": 999}
 
-    run_stage1(MagicMock(), submissions, submission_times, config, [2013], conn=MagicMock())
+    run_stage1(MagicMock(), submissions, submission_times, config, [2013], MagicMock(), BENCHMARKS, 1)
 
     assert eval_order == [2, 1]
 
@@ -131,7 +137,7 @@ def test_stage1_duplicate_gets_worst_score(patched_stage1, monkeypatch):
     submission_times = {1: "2026-07-01T08:00:00", 2: "2026-07-01T10:00:00"}
     config = {"max_model_bytes": 10**10, "max_parameters": 10**10, "max_eval_seconds": 999}
 
-    scores = run_stage1(MagicMock(), submissions, submission_times, config, [2013], conn=MagicMock())
+    scores = run_stage1(MagicMock(), submissions, submission_times, config, [2013], MagicMock(), BENCHMARKS, 1)
 
     assert scores[1] < 0
     assert scores[2] == 0.0
