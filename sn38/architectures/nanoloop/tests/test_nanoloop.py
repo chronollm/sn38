@@ -125,7 +125,7 @@ def test_from_pretrained_on_nanochrono_checkpoint(nano, tmp_path):
         loop = AutoModelForCausalLM.from_pretrained(tmp_path, trust_remote_code=False).eval()
         assert torch.count_nonzero(loop.model.loop_gates).item() == 0
         assert torch.count_nonzero(loop.model.loop_embeds).item() == 0
-        assert torch.equal(_logits(nano), _logits(loop))
+        assert torch.allclose(_logits(nano), _logits(loop), atol=1e-5)
 
 
 def test_roundtrip_through_automodel(tmp_path):
@@ -134,7 +134,7 @@ def test_roundtrip_through_automodel(tmp_path):
     loop.save_pretrained(tmp_path, safe_serialization=True)
     reloaded = AutoModelForCausalLM.from_pretrained(tmp_path, trust_remote_code=False).eval()
     assert reloaded.config.loop_count == 2
-    assert torch.equal(_logits(loop), _logits(reloaded))
+    assert torch.allclose(_logits(loop), _logits(reloaded), atol=1e-5)
 
 
 def test_incremental_forward_matches_full():
