@@ -25,7 +25,7 @@ from ..template.model_store import retrying_download_model, parse_repo, get_devi
 
 logger = logging.getLogger(__name__)
 
-BACKEND_URL = os.environ.get("BACKEND_URL", "https://api.chronollm.com")
+BACKEND_URL = os.environ.get("BACKEND_URL", "https://api.sn38.chronollm.com")
 
 
 def run(args):

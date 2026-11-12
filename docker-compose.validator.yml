@@ -10,7 +10,7 @@ services:
     environment:
       - NETUID=38
       - SUBTENSOR_NETWORK=finney
-      - BACKEND_URL=https://api.chronollm.com
+      - BACKEND_URL=https://api.sn38.chronollm.com
       - DATA_DIR=${DATA_DIR:-/app/data}
       # base for the per-round hub + xet caches, on the persistent volume
       - HF_HOME=${DATA_DIR:-/app/data}/hf

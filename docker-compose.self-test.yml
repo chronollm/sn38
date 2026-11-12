@@ -8,7 +8,7 @@ services:
       - "8081:8081"
     environment:
       - WALLET_NAME=miner
-      - BACKEND_URL=https://api.chronollm.com
+      - BACKEND_URL=https://api.sn38.chronollm.com
       # This secret is encrypted client-side by Phala CLI before transmission
       - HOTKEY_FILE_CONTENT=${HOTKEY_FILE_CONTENT}
       - HF_TOKEN=${HF_TOKEN}

@@ -94,7 +94,7 @@ Top 30 miners by leak score are selected, then matched in round-robin 1v1 duels.
 
 Top 10 receive emissions on an exponential decay. #1 gets roughly 52%, #2 roughly 23%, #3 roughly 12%, and so on.
 
-> **Note**: All thresholds, weights, and constants mentioned above may change over time. Check the current values at [api.chronollm.com/config](https://api.chronollm.com/config).
+> **Note**: All thresholds, weights, and constants mentioned above may change over time. Check the current values at [api.sn38.chronollm.com/config](https://api.sn38.chronollm.com/config).
 
 ## Rounds
 

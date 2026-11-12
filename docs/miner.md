@@ -158,10 +158,10 @@ After submitting, the backend polls the chain every 5 minutes. You can verify yo
 
 ```bash
 # Check current round
-curl https://api.chronollm.com/rounds/current
+curl https://api.sn38.chronollm.com/rounds/current
 
 # Check your submission (replace {round} and {uid} with your values)
-curl https://api.chronollm.com/submissions/{round}/{uid}
+curl https://api.sn38.chronollm.com/submissions/{round}/{uid}
 ```
 
 ## Self-test your model (leak detection)
@@ -212,7 +212,7 @@ Submitting someone else's model or an exact copy is pointless. During evaluation
 
 ## Scoring
 
-All evaluation parameters are available at [api.chronollm.com/config](https://api.chronollm.com/config).
+All evaluation parameters are available at [api.sn38.chronollm.com/config](https://api.sn38.chronollm.com/config).
 
 Your models are evaluated in two main stages:
 
