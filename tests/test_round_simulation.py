@@ -22,6 +22,8 @@ CONFIG = {
     "max_eval_seconds": 999,
     "min_eval_score": -3.0,
     "leak_epsilon": -6.0,
+    "leak_floor": -3.0,
+    "leak_ceiling": -10.0,
     "top_n_for_quality": 10,
     "leak_weight": 0.7,
     "quality_weight": 0.3,
@@ -80,8 +82,12 @@ def run_stage2(monkeypatch):
     """Factory fixture to run Stage 2 with optional overrides."""
     def _run(win_rates=None, config_override=None):
         cfg = {**CONFIG, **(config_override or {})}
-        monkeypatch.setattr("sn38.neurons.validator.run_quality_duels",
-                            lambda *a: win_rates if win_rates is not None else np.zeros(10))
+        async def fake_duels(*a):
+            return win_rates if win_rates is not None else np.zeros(10)
+
+        monkeypatch.setattr("sn38.neurons.validator.run_quality_duels", fake_duels)
+        monkeypatch.setattr("sn38.neurons.validator.generate_prompts", lambda r: [{"prompt": "p"}])
+        monkeypatch.setattr("sn38.neurons.validator.delete_models", lambda revisions: None)
         metagraph = MagicMock()
         metagraph.n = 10
         return run_stage2_and_score(

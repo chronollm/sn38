@@ -19,6 +19,7 @@ dependencies = [
 
 [tool.pytest.ini_options]
 pythonpath = ["."]
+testpaths = ["tests", "sn38"]
 
 [tool.setuptools.packages.find]
 include = ["sn38*"]
